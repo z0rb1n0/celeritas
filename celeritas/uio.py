@@ -5,8 +5,8 @@
 	without exposing the underlying API.
 	The most important thing we need the window to expose is the OpenGL context
 """
-import logging;
+import logging
 
 
-logger = logging.getLogger(__name__);
+logger = logging.getLogger(__name__)
 

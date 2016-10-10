@@ -4,17 +4,17 @@
 	Configuration manager for the "Celeritas" engine.
 	It's a silly JSON
 """
-import os;
-import json;
-import logging;
-import logging.config;
+import os
+import json
+import logging
+import logging.config
 
-import info;
+import info
 
 
-logger = logging.getLogger(__name__);
+logger = logging.getLogger(__name__)
 
-CONFIG_DIR_RELATIVE = "." + info.APP_NAME;
+CONFIG_DIR_RELATIVE = "." + info.APP_NAME
 
 # Grand Unified Configuration, Postgres style
 
@@ -28,7 +28,7 @@ guc = {
 		"resolution_x": 640,
 		"resolution_y": 480
 	}
-};
+}
 
 
 def init_log():
@@ -54,109 +54,109 @@ def init_log():
 				"propagate": True
 			},
 		}
-	});
-	return True;
+	})
+	return True
 
 
 
 def load():
 	if (not init_log()):
-		print("Failed to initialize the logger");
-		exit(3);
+		print("Failed to initialize the logger")
+		exit(3)
 
 	if ("HOME" not in os.environ):
-		logger.error("There is no HOME environment variable. Cannot continue");
-		exit(3);
+		logger.error("There is no HOME environment variable. Cannot continue")
+		exit(3)
 
-	logger.info("Loading configuration");
+	logger.info("Loading configuration")
 
 
-	guc["system"]["config_dir"] = os.environ["HOME"] + "/" + CONFIG_DIR_RELATIVE;
+	guc["system"]["config_dir"] = os.environ["HOME"] + "/" + CONFIG_DIR_RELATIVE
 
 	if (not os.path.isdir(guc["system"]["config_dir"])):
 		try:
-			os.mkdir(guc["system"]["config_dir"]);
+			os.mkdir(guc["system"]["config_dir"])
 		except OSError:
-			logger.error("Unable to create configuration directory `%s`", (guc["system"]["config_dir"]));
-			exit(3);
+			logger.error("Unable to create configuration directory `%s`", (guc["system"]["config_dir"]))
+			exit(3)
 
-	config_file = guc["system"]["config_dir"] + "/" + guc["system"]["guc_file"];
+	config_file = guc["system"]["config_dir"] + "/" + guc["system"]["guc_file"]
 
 	try:
-		guc_fp = open(config_file, "r");
+		guc_fp = open(config_file, "r")
 	except IOError:
-		logger.info("Missing configuration file `%s`. Running off hard coded defaults", (config_file));
-		return False;
+		logger.info("Missing configuration file `%s`. Running off hard coded defaults", (config_file))
+		return False
 
 
-	file_guc = None;
+	file_guc = None
 	try:
-		file_guc = json.load(guc_fp, encoding = "UTF-8");
+		file_guc = json.load(guc_fp, encoding = "UTF-8")
 	except:
-		logger.info("Unable to load JSON from file `%s`. Running off hard coded defaults", (config_file));
+		logger.info("Unable to load JSON from file `%s`. Running off hard coded defaults", (config_file))
 
 
-	guc_fp.close();
+	guc_fp.close()
 
 	if (file_guc is None):
-		return False;
+		return False
 
 
 	# we now only update the guc's already existing settings and raise warnings for the other ones
 	def import_guc_settings(file_guc, process_guc, base_key_path = ""):
 		for (guc_key, guc_value) in file_guc.items():
-			full_key_path = base_key_path + "\t" + guc_key;
+			full_key_path = base_key_path + "\t" + guc_key
 			if (guc_key in process_guc):
 				if (type(guc_value) is dict):
-					import_guc_settings(guc_value, process_guc[guc_key], full_key_path);
+					import_guc_settings(guc_value, process_guc[guc_key], full_key_path)
 				else:
 					# we use python's reference system to replace the guc settings
-					process_guc[guc_key] = guc_value;
+					process_guc[guc_key] = guc_value
 			else:
-				logger.warning("Unsupported/deprecated configuration option `%s`. Will not be saved in the configuration", (full_key_path.replace("\t", "/")));
+				logger.warning("Unsupported/deprecated configuration option `%s`. Will not be saved in the configuration", (full_key_path.replace("\t", "/")))
 
-	import_guc_settings(file_guc, guc);
+	import_guc_settings(file_guc, guc)
 
 
-	print(guc);
+	print(guc)
 
-	return True;
+	return True
 
 
 
 
 def save():
 
-	logger.info("Saving configuration");
-	config_file = guc["system"]["config_dir"] + "/" + guc["system"]["guc_file"];
-	config_file_tmp = config_file + ".tmp";
+	logger.info("Saving configuration")
+	config_file = guc["system"]["config_dir"] + "/" + guc["system"]["guc_file"]
+	config_file_tmp = config_file + ".tmp"
 
-	guc_fp = None;
+	guc_fp = None
 	try:
-		guc_fp = open(config_file_tmp, "w");
+		guc_fp = open(config_file_tmp, "w")
 	except IOError:
-		logger.error("Unable to open temporary file `%s`. Configuration will not be saved", (config_file_tmp));
-		return False;
+		logger.error("Unable to open temporary file `%s`. Configuration will not be saved", (config_file_tmp))
+		return False
 	
 	if (guc_fp is not None):
-		saved_in_full = False;
+		saved_in_full = False
 		try:
-			json.dump(guc, guc_fp, encoding = "UTF-8", indent = 4, separators = None);
-			saved_in_full = True;
+			json.dump(guc, guc_fp, encoding = "UTF-8", indent = 4, separators = None)
+			saved_in_full = True
 		except IOError:
-			logger.error("Cannot write to temporary file `%s`. Configuration will not be saved", (config_file_tmp));
+			logger.error("Cannot write to temporary file `%s`. Configuration will not be saved", (config_file_tmp))
 
-		guc_fp.close();
+		guc_fp.close()
 
 
 	if ((guc_fp is not None) and saved_in_full):
 		# this guarantees atomic operations
 		try:
-			os.rename(config_file_tmp, config_file);
-			return True;
+			os.rename(config_file_tmp, config_file)
+			return True
 		except:
-			logger.error("Cannot rename temporary file `%s` into `%s`. Configuration will not be saved", (config_file_tmp, config_file));
-			return False;
+			logger.error("Cannot rename temporary file `%s` into `%s`. Configuration will not be saved", (config_file_tmp, config_file))
+			return False
 
 			
 	
