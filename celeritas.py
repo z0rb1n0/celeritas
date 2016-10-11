@@ -1,15 +1,13 @@
 #!/usr/bin/python -u
 
 
-import celeritas.config
-from celeritas.config import guc
 
 import sys
 import logging
 import time
 import logging
-from sdl2 import *
-#import sdl2.ext
+
+
 
 
 import OpenGL
@@ -29,6 +27,16 @@ import numpy
 from OpenGL.GL import shaders
 
 
+import celeritas.config
+import celeritas.info
+from celeritas.config import guc
+
+from celeritas.uio import AppWindow
+
+
+
+
+
 APP_TITLE = b"Celeritas 0.0.0"
 
 
@@ -40,49 +48,17 @@ def main():
 
 	celeritas.config.load()
 
-	print("Initializing SDL")
-	if (SDL_Init(SDL_INIT_VIDEO) != 0):
-		print("SDL Initialization failed")
-		exit(5)
-	
 
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4)
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5)
-
-	SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8)
-	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8)
-	SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8)
-	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24)
-
-	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
-
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
-
-
-	print("Initializing SDL window")
-	main_window = SDL_CreateWindow(
-		APP_TITLE + " (SDL)",
-		SDL_WINDOWPOS_CENTERED,
-		SDL_WINDOWPOS_CENTERED,
-		guc["video"]["resolution_x"], guc["video"]["resolution_y"],
-		SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL
+	main_window = AppWindow(
+		w = guc["video"]["resolution_x"],
+		h = guc["video"]["resolution_y"],
+		title = ("%s %d.%d.%d" % (
+			celeritas.info.APP_TITLE,
+			celeritas.info.APP_MAJOR,
+			celeritas.info.APP_MINOR,
+			celeritas.info.APP_REVISION
+		))
 	)
-
-	if (not main_window):
-		print("Initializing SDL window")
-		print(SDL_GetError())
-		return 3
-
-
-	print("Creating OpenGL context")
-	main_context = SDL_GL_CreateContext(main_window)
-	if (SDL_GL_MakeCurrent(main_window, main_context)):
-		print("Failed to make OpenGL context current")
-		exit(5)
-
-
-	SDL_GL_SetSwapInterval(1)
-
 
 	print("Vendor:          %s" % (glGetString(GL_VENDOR)))
 	print("Opengl version:  %s" % (glGetString(GL_VERSION)))
@@ -237,11 +213,13 @@ def main():
 
 
 
+	# this is temporary as we need to abstract away the events
+	from sdl2 import *
 
 	loop_active = True
 	event = SDL_Event()
 	w_x = ctypes.c_int(); w_y = ctypes.c_int()
-	SDL_GetWindowSize(main_window, w_x, w_y); # move this to "on resize" events and the like
+	SDL_GetWindowSize(main_window.sdl_window, w_x, w_y); # move this to "on resize" events and the like
 	rel_x = 0.0; rel_y = 0.0
 
 	while loop_active:
@@ -252,7 +230,7 @@ def main():
 				break
 			#elif (event.type in (SDL_WINDOWEVENT_RESIZED, SDL_WINDOWEVENT_SIZE_CHANGED, SDL_WINDOWEVENT_MOVED)):
 				#print("Resized")
-				#SDL_GetWindowSize(main_window, w_x, w_y)
+				#SDL_GetWindowSize(main_window.sdl_window, w_x, w_y)
 			elif (event.type == SDL_MOUSEMOTION):
 				m_x = ctypes.c_int(); m_y = ctypes.c_int()
 				SDL_GetMouseState(m_x, m_y)
@@ -277,7 +255,7 @@ def main():
 		glUseProgram(0)
 		glBindVertexArray(0)
 
-		SDL_GL_SwapWindow(main_window)
+		SDL_GL_SwapWindow(main_window.sdl_window)
 
 		time.sleep(0.001)
 
@@ -288,8 +266,9 @@ def main():
 	SDL_GL_DeleteContext(main_context)
 	SDL_DestroyWindow(main_window)
 	SDL_Quit()
+	celeritas.config.save();
 	#windowsurface = sfSDL_SetVideoMode(2560, 1440, 24, SDL_OPENGL)
-	print("Terminating")
+	logger.info("Terminating");
 
 
 	return 0
