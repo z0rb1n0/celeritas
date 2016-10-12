@@ -1,4 +1,4 @@
-#!/usr/bin/python -u
+#!/usr/bin/python -uB
 
 """
 	Generic app information

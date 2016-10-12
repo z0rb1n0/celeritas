@@ -1,4 +1,4 @@
-#!/usr/bin/python -u
+#!/usr/bin/python -uB
 
 """
 	Configuration manager for the "Celeritas" engine.

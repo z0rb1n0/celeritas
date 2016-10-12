@@ -1,4 +1,4 @@
-#!/usr/bin/python -u
+#!/usr/bin/python -uB
 
 
 
@@ -31,7 +31,7 @@ import celeritas.config
 import celeritas.info
 from celeritas.config import guc
 
-from celeritas.uio import AppWindow
+import celeritas.uio as uio
 
 
 
@@ -44,12 +44,15 @@ APP_TITLE = b"Celeritas 0.0.0"
 logger = logging.getLogger(__name__)
 
 
+# this is temporary as we need to abstract away the events
+from sdl2 import *
+
 def main():
 
 	celeritas.config.load()
 
 
-	main_window = AppWindow(
+	main_window = uio.AppWindow(
 		w = guc["video"]["resolution_x"],
 		h = guc["video"]["resolution_y"],
 		title = ("%s %d.%d.%d" % (
@@ -92,8 +95,8 @@ def main():
 
 			void main() {
 				gl_Position = vec4(
-					crosshair_position.x + vertex_offset.x,
-					crosshair_position.y + vertex_offset.y,
+					crosshair_position.x + (vertex_offset.x * (1.0 - abs(crosshair_position.x))),
+					crosshair_position.y + (vertex_offset.y * (1.0 - abs(crosshair_position.y))),
 					vertex_offset.z,
 					1.0
 				);
@@ -115,10 +118,20 @@ def main():
 		"""
 			#version 450 core
 
+			uniform vec4 obj_rgba;
+			uniform vec2 crosshair_position;
+
 			out vec4 color;
 
+			float distance;
+
 			void main()	{
-				color = vec4(1.0f, 0.5f, 0.2f, 1.0f);
+				distance = pow(pow(abs(crosshair_position.x), 2.0) + pow(abs(crosshair_position.y), 2.0), 0.5) / 1.414213562;
+				//distance = (abs.crosshair_position.x ** 2);
+				//color = obj_rgba;
+				color = vec4(1.0, 1.0, 1.0, 1.0);
+				color = vec4((1 - distance), distance, 0.0, obj_rgba.w);
+				//color = vec4((1 - abs(crosshair_position.x)), (1 - abs(crosshair_position.x)), abs(crosshair_position.x), 1.0);
 			}
 		"""
 	)
@@ -145,6 +158,7 @@ def main():
 	map(glDeleteShader, (shader_f_main, shader_v_main))
 
 	crosshair_uniform = glGetUniformLocation(shprog_main, "crosshair_position")
+	rgba_uniform = glGetUniformLocation(shprog_main, "obj_rgba")
 
 
 	vertices = [
@@ -213,8 +227,6 @@ def main():
 
 
 
-	# this is temporary as we need to abstract away the events
-	from sdl2 import *
 
 	loop_active = True
 	event = SDL_Event()
@@ -236,7 +248,17 @@ def main():
 				SDL_GetMouseState(m_x, m_y)
 				rel_x = (-0.5 + (float(m_x.value) / float(w_x.value))) * 2.0
 				rel_y = (-0.5 + (float(m_y.value) / float(w_y.value))) * -2.0
-
+			elif (event.type in (SDL_KEYDOWN, SDL_KEYUP)):
+				repeated = ({"is_repeat": bool(event.key.repeat)} if (event.type == SDL_KEYDOWN) else {})
+				key_event = (uio.EventKeyDown if (event.type == SDL_KEYDOWN) else uio.EventKeyUp)(
+					key_code = event.key.keysym.sym,
+					unicode_cp = event.key.keysym.unicode,
+					scan_code = event.key.keysym.scancode,
+					modifiers = event.key.keysym.mod,
+					timestamp = event.key.timestamp,
+					window_id = event.key.windowID,
+					**repeated
+				)
 			
 
 		glClear(GL_COLOR_BUFFER_BIT)
@@ -245,6 +267,8 @@ def main():
 		#print("Activating program")
 		glUseProgram(shprog_main)
 		glUniform2f(crosshair_uniform, rel_x, rel_y)
+
+		glUniform4f(rgba_uniform, 0.0, 0.0, 0.0, 1.0)
 
 
 		glBindVertexArray(vao_main)
@@ -263,9 +287,10 @@ def main():
 	glDeleteVertexArrays(1, [vao_main])
 	glDeleteBuffers(1, [vbo_main])
 
-	SDL_GL_DeleteContext(main_context)
-	SDL_DestroyWindow(main_window)
-	SDL_Quit()
+
+	del(main_window);
+
+
 	celeritas.config.save();
 	#windowsurface = sfSDL_SetVideoMode(2560, 1440, 24, SDL_OPENGL)
 	logger.info("Terminating");
