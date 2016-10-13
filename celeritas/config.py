@@ -118,8 +118,6 @@ def load():
 	import_guc_settings(file_guc, guc)
 
 
-	print(guc)
-
 	return True
 
 

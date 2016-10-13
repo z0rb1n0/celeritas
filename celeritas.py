@@ -45,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 
 # this is temporary as we need to abstract away the events
-from sdl2 import *
 
 def main():
 
@@ -228,38 +227,40 @@ def main():
 
 
 
-	loop_active = True
-	event = SDL_Event()
 	w_x = ctypes.c_int(); w_y = ctypes.c_int()
-	SDL_GetWindowSize(main_window.sdl_window, w_x, w_y); # move this to "on resize" events and the like
+	#SDL_GetWindowSize(main_window.sdl_window, w_x, w_y); # move this to "on resize" events and the like
 	rel_x = 0.0; rel_y = 0.0
 
-	while loop_active:
+	while (uio.window_count > 0):
 
-		while (SDL_PollEvent(ctypes.byref(event))):
-			if (event.type == SDL_QUIT):
-				loop_active = False
+		for event in main_window.pop_events():
+			#print(isinstance(event, uio.WindowCloseEvent))
+			if (isinstance(event, uio.WindowCloseEvent)):
+				main_window = None
 				break
 			#elif (event.type in (SDL_WINDOWEVENT_RESIZED, SDL_WINDOWEVENT_SIZE_CHANGED, SDL_WINDOWEVENT_MOVED)):
 				#print("Resized")
 				#SDL_GetWindowSize(main_window.sdl_window, w_x, w_y)
-			elif (event.type == SDL_MOUSEMOTION):
-				m_x = ctypes.c_int(); m_y = ctypes.c_int()
-				SDL_GetMouseState(m_x, m_y)
-				rel_x = (-0.5 + (float(m_x.value) / float(w_x.value))) * 2.0
-				rel_y = (-0.5 + (float(m_y.value) / float(w_y.value))) * -2.0
-			elif (event.type in (SDL_KEYDOWN, SDL_KEYUP)):
-				repeated = ({"is_repeat": bool(event.key.repeat)} if (event.type == SDL_KEYDOWN) else {})
-				key_event = (uio.EventKeyDown if (event.type == SDL_KEYDOWN) else uio.EventKeyUp)(
-					key_code = event.key.keysym.sym,
-					unicode_cp = event.key.keysym.unicode,
-					scan_code = event.key.keysym.scancode,
-					modifiers = event.key.keysym.mod,
-					timestamp = event.key.timestamp,
-					window_id = event.key.windowID,
-					**repeated
-				)
-			
+			if (isinstance(event, uio.MouseMotionEvent)):
+ 				rel_x = (-0.5 + (float(event.x_abs) / float(guc["video"]["resolution_x"]))) * 2.0
+ 				rel_y = (-0.5 + (float(event.y_abs) / float(guc["video"]["resolution_y"]))) * -2.0
+# 				rel_y = (-0.5 + (float(m_y.value) / float(w_y.value))) * -2.0
+# 			elif (event.type in (SDL_KEYDOWN, SDL_KEYUP)):
+# 				key_event = uio.KeyInputEvent(
+# 					event_type = event.type,
+# 					timestamp = event.key.timestamp,
+# 					window_id = event.key.windowID,
+# 					key_code = event.key.keysym.sym,
+# 					unicode_cp = event.key.keysym.unicode,
+# 					scan_code = event.key.keysym.scancode,
+# 					modifiers = event.key.keysym.mod,
+# 					is_repeat = bool(event.key.repeat)
+# 				)
+# 			
+
+		# did we delete the window
+		if (main_window is None):
+			break;
 
 		glClear(GL_COLOR_BUFFER_BIT)
 		glClearColor(0, 0.2, 0.2, 0)
@@ -279,10 +280,12 @@ def main():
 		glUseProgram(0)
 		glBindVertexArray(0)
 
-		SDL_GL_SwapWindow(main_window.sdl_window)
+		main_window.frame_swap()
 
 		time.sleep(0.001)
 
+
+	logger.info("The last window was closed. Shutting down")
 
 	glDeleteVertexArrays(1, [vao_main])
 	glDeleteBuffers(1, [vbo_main])
@@ -291,12 +294,10 @@ def main():
 	del(main_window);
 
 
-	celeritas.config.save();
+	celeritas.config.save()
 	#windowsurface = sfSDL_SetVideoMode(2560, 1440, 24, SDL_OPENGL)
-	logger.info("Terminating");
+	logger.info("Terminating")
 
-
-	return 0
 
 
 
