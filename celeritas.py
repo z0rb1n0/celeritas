@@ -32,6 +32,7 @@ import celeritas.info
 from celeritas.config import guc
 
 import celeritas.uio as uio
+import celeritas.glrender as glrender
 
 
 
@@ -62,6 +63,14 @@ def main():
 		))
 	)
 
+
+	main_context = glrender.Context(main_window.gl_context)
+	exit(0)
+	
+	
+	#print(main_context)
+	#exit(0)
+
 	print("Vendor:          %s" % (glGetString(GL_VENDOR)))
 	print("Opengl version:  %s" % (glGetString(GL_VERSION)))
 	print("GLSL Version:    %s" % (glGetString(GL_SHADING_LANGUAGE_VERSION)))
@@ -71,7 +80,7 @@ def main():
 	#glLoadIdentity()
 
 
-	print("Creating OpenGL viewport")
+	print("Configuring OpenGL viewport")
 	glViewport(0, 0, guc["video"]["resolution_x"], guc["video"]["resolution_y"])
 
 	#glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -166,13 +175,11 @@ def main():
 		-0.2,  0.2,  0.0,		# top left
 		 0.2,  0.2,  0.0,		# top right
 	]
-	vertices_s = (GLfloat * len(vertices))(*vertices)
 
 	indices = [
-		0, 1, 3,
-		3, 2, 0
+		1, 2, 0,
+		1, 3, 2
 	]
-	indices_s = (GLuint * len(indices))(*indices)
 
 
 	print("Generating Vertex Array Object")
@@ -187,8 +194,8 @@ def main():
 	print("Storing data in the vertex buffer")
 	glBufferData(
 		GL_ARRAY_BUFFER,
-		ArrayDatatype.arrayByteCount(vertices_s),	# calculate size
-		vertices_s,   								# this is how the array of GLfloats is built: sort a dynamic type. Ask Mike
+		ctypes.sizeof(GLfloat) * len(vertices),	# calculate size
+		(GLfloat * len(vertices))(*vertices),
 		GL_STATIC_DRAW
 	)
 
@@ -200,8 +207,8 @@ def main():
 	print("Storing data in the element buffer")
 	glBufferData(
 		GL_ELEMENT_ARRAY_BUFFER,
-		ArrayDatatype.arrayByteCount(indices_s),	# calculate size
-		indices_s,   								# this is how the array of GLfloats is built: sort a dynamic type. Ask Mike
+		ctypes.sizeof(GLuint) * len(indices),	# calculate size
+		(GLuint * len(indices))(*indices),
 		GL_STATIC_DRAW
 	)
 
@@ -275,7 +282,7 @@ def main():
 		glBindVertexArray(vao_main)
 
 		#glDrawArrays(GL_TRIANGLES, 0, 3)
-		glDrawElements(GL_TRIANGLES, len(indices_s), GL_UNSIGNED_INT, None)
+		glDrawElements(GL_TRIANGLES, len(indices), GL_UNSIGNED_INT, None)
 
 		glUseProgram(0)
 		glBindVertexArray(0)

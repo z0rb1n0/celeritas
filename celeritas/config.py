@@ -21,7 +21,9 @@ CONFIG_DIR_RELATIVE = "." + info.APP_NAME
 guc = {
 	"system": {
 		"config_dir": None,
-		"guc_file": "celeritas_guc.json"
+		"guc_file": "celeritas_guc.json",
+		"application_name": info.APP_NAME,
+		"version_string": ("%d.%d.%d" % (info.APP_MAJOR, info.APP_MINOR, info.APP_REVISION))
 	},
 	"video": {
 		"full_screen": False,
@@ -105,15 +107,21 @@ def load():
 	# we now only update the guc's already existing settings and raise warnings for the other ones
 	def import_guc_settings(file_guc, process_guc, base_key_path = ""):
 		for (guc_key, guc_value) in file_guc.items():
-			full_key_path = base_key_path + "\t" + guc_key
-			if (guc_key in process_guc):
-				if (type(guc_value) is dict):
-					import_guc_settings(guc_value, process_guc[guc_key], full_key_path)
+			full_key_path = base_key_path + '\t' + guc_key
+			
+			# some settings we don't import from the file
+			if (full_key_path not in (
+				"\tsystem\tapplication_name",
+				"\tsystem\tversion_string"
+			)):
+				if (guc_key in process_guc):
+					if (type(guc_value) is dict):
+						import_guc_settings(guc_value, process_guc[guc_key], full_key_path)
+					else:
+						# we use python's reference system to replace the guc settings
+						process_guc[guc_key] = guc_value
 				else:
-					# we use python's reference system to replace the guc settings
-					process_guc[guc_key] = guc_value
-			else:
-				logger.warning("Unsupported/deprecated configuration option `%s`. Will not be saved in the configuration", (full_key_path.replace("\t", "/")))
+					logger.warning("Unsupported/deprecated configuration option `%s`. Will not be saved in the configuration", (full_key_path.replace("\t", "/")))
 
 	import_guc_settings(file_guc, guc)
 
@@ -139,7 +147,11 @@ def save():
 	if (guc_fp is not None):
 		saved_in_full = False
 		try:
-			json.dump(guc, guc_fp, encoding = "UTF-8", indent = 4, separators = None)
+			# some keys must not be saved
+			# this is how we filter them :(
+			s_guc = dict(guc)
+			s_guc["system"] = {s_key: s_val for (s_key, s_val) in guc["system"].items() if (s_key not in ("config_dir", "guc_file"))}
+			json.dump(s_guc, guc_fp, encoding = "UTF-8", indent = 4, separators = None)
 			saved_in_full = True
 		except IOError:
 			logger.error("Cannot write to temporary file `%s`. Configuration will not be saved", (config_file_tmp))
