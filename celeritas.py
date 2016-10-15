@@ -64,42 +64,19 @@ def main():
 	)
 
 
-	main_context = glrender.Context(main_window.gl_context)
-	exit(0)
-	
-	
-	#print(main_context)
-	#exit(0)
-
 	print("Vendor:          %s" % (glGetString(GL_VENDOR)))
 	print("Opengl version:  %s" % (glGetString(GL_VERSION)))
 	print("GLSL Version:    %s" % (glGetString(GL_SHADING_LANGUAGE_VERSION)))
 	print("Renderer:        %s" % (glGetString(GL_RENDERER)))
 
-	#glMatrixMode(GL_PROJECTION)
-	#glLoadIdentity()
 
 
-	print("Configuring OpenGL viewport")
-	glViewport(0, 0, guc["video"]["resolution_x"], guc["video"]["resolution_y"])
-
-	#glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-	#glEnable(GL_DEPTH_TEST)
-	#glEnable(GL_CULL_FACE)
-	#glEnable(GL_BLEND)
-
-
-	print("Creating vertex shader")
-	shader_v_main = glCreateShader(GL_VERTEX_SHADER)
-	print("Preparing vertex shader source")
-	glShaderSource(
-		shader_v_main,
-		"""
+	
+	shader_src_vertex_0 = """
 			#version 450 core
 			layout (location = 0) in vec3 vertex_offset;
 
 			uniform vec2 crosshair_position;
-
 
 			void main() {
 				gl_Position = vec4(
@@ -110,20 +87,8 @@ def main():
 				);
 			}
 		"""
-	)
-	print("Compiling vertex shader")
-	glCompileShader(shader_v_main)
-	if (not glGetShaderiv(shader_v_main, GL_COMPILE_STATUS)):
-		print("Shader compilation failed. Error: `%s`" % glGetShaderInfoLog(shader_v_main))
-		return 5
 
-
-	print("Creating fragment shader")
-	shader_f_main = glCreateShader(GL_FRAGMENT_SHADER)
-	print("Preparing fragment shader source")
-	glShaderSource(
-		shader_f_main,
-		"""
+	shader_src_fragment_0 = """
 			#version 450 core
 
 			uniform vec4 obj_rgba;
@@ -142,32 +107,19 @@ def main():
 				//color = vec4((1 - abs(crosshair_position.x)), (1 - abs(crosshair_position.x)), abs(crosshair_position.x), 1.0);
 			}
 		"""
-	)
-	print("Compiling fragment shader")
-	glCompileShader(shader_f_main)
-	if (not glGetShaderiv(shader_f_main, GL_COMPILE_STATUS)):
-		print("Shader compilation failed. Error: `%s`" % glGetShaderInfoLog(shader_f_main))
-		return 5
 
+	main_context = glrender.Context(main_window.gl_context)
+	(gprog_main,) = main_context.programs.add()
+	(shader_v_main, shader_f_main) = gprog_main.shaders.add([
+			(glrender.ST_VERTEX, shader_src_vertex_0),
+			(glrender.ST_FRAGMENT, shader_src_fragment_0)
+		
+	])
 
-	print("Creating shader program")
-	shprog_main = glCreateProgram()
-	print("Attaching shaders to program")
-	glAttachShader(shprog_main, shader_v_main)
-	glAttachShader(shprog_main, shader_f_main)
-	print("Linking program")
-	glLinkProgram(shprog_main)
-	if (not glGetProgramiv(shprog_main, GL_LINK_STATUS)):
-		print("Program linking failed. Error: `%s`" % glGetProgramInfoLog(shprog_main))
-		return 5
+	gprog_main.build()
 
-
-	print("Deleting shader objects")
-	map(glDeleteShader, (shader_f_main, shader_v_main))
-
-	crosshair_uniform = glGetUniformLocation(shprog_main, "crosshair_position")
-	rgba_uniform = glGetUniformLocation(shprog_main, "obj_rgba")
-
+	crosshair_uniform = glGetUniformLocation(gprog_main, "crosshair_position")
+	rgba_uniform = glGetUniformLocation(gprog_main, "obj_rgba")
 
 	vertices = [
 		-0.2, -0.2,  0.0,		# bottom left
@@ -273,7 +225,7 @@ def main():
 		glClearColor(0, 0.2, 0.2, 0)
 
 		#print("Activating program")
-		glUseProgram(shprog_main)
+		glUseProgram(gprog_main)
 		glUniform2f(crosshair_uniform, rel_x, rel_y)
 
 		glUniform4f(rgba_uniform, 0.0, 0.0, 0.0, 1.0)
@@ -291,6 +243,8 @@ def main():
 
 		time.sleep(0.001)
 
+
+	del(main_context)
 
 	logger.info("The last window was closed. Shutting down")
 
