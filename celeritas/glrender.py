@@ -14,11 +14,11 @@ OpenGL.USE_ACCELERATE = True
 #OpenGL.FULL_LOGGING = True
 
 from OpenGL.GL import *
-from OpenGL.AGL import *
-from OpenGL.GLE import *
-from OpenGL.GLU import *
-from OpenGL.GLUT import *
-from OpenGL.arrays import vbo
+#from OpenGL.AGL import *
+#from OpenGL.GLE import *
+#from OpenGL.GLU import *
+#from OpenGL.GLUT import *
+from OpenGL.arrays import GLbyteArray
 import numpy
 
 from OpenGL.GL import shaders
@@ -253,8 +253,6 @@ class Program(IndexableObject):
 		if (not isinstance(self.id, long)):
 			raise OpenGLCreationException("Unable to create Program")
 
-		self.linked = False
-
 		self.shaders = ShaderCatalog(shaders)
 
 		if (build):
@@ -280,6 +278,70 @@ class Program(IndexableObject):
 	def __repr__(self):
 		return "<" + self.__str__() + ">"
 
+
+	@property
+	def linked(self):
+		""" Linked status of the program """
+		status = GLint()
+		glGetProgramiv(self.id, GL_LINK_STATUS, status)
+		return bool(status.value)
+		
+
+	@property
+	def info_log(self):
+		""" Program's info log """
+		l_length = GLint()
+		glGetProgramiv(self.id, GL_INFO_LOG_LENGTH, l_length)
+
+		r_length = GLsizei()
+		r_buf = (GLchar * l_length.value)()
+		
+		# unfortunately the pyOpenGL wrapper is not implemented like for like to the API here
+		#glGetProgramInfoLog(self.id, l_length.value, r_length, r_buf)
+		r_buf.value = glGetProgramInfoLog(self.id)
+
+		#print(dir(r_buf))
+		return r_buf.value
+
+
+	@property
+	def binary(self):
+		"""
+			This property represents the program's binary, as a tuple.
+			First member is the binary format, the second the program image.
+		"""
+		if (not self.linked):
+			raise OpenGLStateException("Program is not linked")
+			return None
+
+		p_size = GLint()
+		glGetProgramiv(self.id, GL_PROGRAM_BINARY_LENGTH, p_size)
+		r_size = GLsizei()
+		r_format = GLenum()
+		r_buf = (GLchar * p_size.value)()
+		
+		glGetProgramBinary(self.id, p_size.value, r_size, r_format, r_buf)
+		return (r_format.value, r_buf.raw)
+
+
+	@binary.setter
+	def binary(self, b_prog):
+		"""
+			Please note that replacing the binary has no bearing on the object's own
+			representation.
+		"""
+		if ((not isinstance(b_prog, (list, tuple))) or (len(b_prog) != 2)):
+			raise TypeError("Binaries must be supplied as lists/tuples such as (bin_fmt, image)")
+
+		bbuf = (GLchar * len(b_prog[1]))()
+		bbuf.raw = b_prog[1]
+
+		glProgramBinary(self.id, GLenum(b_prog[0]), bbuf, len(b_prog[1]))
+		if (self.linked):
+			return True
+		else:
+			raise OpenGLBuildException("Uploading of program failed: %s", self.info_log)
+
 	def build(self, activate = False):
 		"""
 			Attaches all the shaders to the program, links the program and detaches the shaders
@@ -287,11 +349,11 @@ class Program(IndexableObject):
 		"""
 		if (not len(self.shaders)):
 			raise OpenGLStateException("No shaders to link")
+			return None
 		for shader_id in self.shaders:
 			# we really hope this does not fail silently fail
 			glAttachShader(self.id, shader_id)
 
-		self.linked = False
 		glLinkProgram(self.id)
 		# we raise the exception after detaching the shaders,
 		# however we collect the state now
@@ -300,14 +362,14 @@ class Program(IndexableObject):
 		for shader_id in self.shaders:
 			glDetachShader(self.id, shader_id)
 
+		if (not build_ok):
+			raise OpenGLBuildException("Program linking failed. Error: `%s`" % self.info_log)
+			return None
 
-		if (build_ok):
-			self.linked = True
-		else:
-			raise OpenGLBuildException("Program linking failed. Error: `%s`" % glGetProgramInfoLog(self.id))
-
-
+		if (activate):
+			self.activate()
 		
+	
 	def activate(self):
 		"""
 			Makes this program the active one.

@@ -17,14 +17,13 @@ OpenGL.USE_ACCELERATE = True
 #OpenGL.FULL_LOGGING = True
 
 from OpenGL.GL import *
-from OpenGL.AGL import *
-from OpenGL.GLE import *
-from OpenGL.GLU import *
-from OpenGL.GLUT import *
-from OpenGL.arrays import vbo
-import numpy
+#from OpenGL.AGL import *
+#from OpenGL.GLE import *
+#from OpenGL.GLU import *
+#from OpenGL.GLUT import *
+#import numpy
 
-from OpenGL.GL import shaders
+#from OpenGL.GL import shaders
 
 
 import celeritas.config
@@ -115,10 +114,17 @@ def main():
 			(glrender.ST_FRAGMENT, shader_src_fragment_0)
 	])
 
-	gprog_main.build()
+	gprog_main	.build()
+	
+	
 
 	crosshair_uniform = glGetUniformLocation(gprog_main, "crosshair_position")
 	rgba_uniform = glGetUniformLocation(gprog_main, "obj_rgba")
+
+	bin = gprog_main.binary;
+	print(bin)
+	gprog_main.binary = bin
+	exit(0)
 
 	vertices = [
 		-0.2, -0.2,  0.0,		# bottom left
