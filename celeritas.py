@@ -113,7 +113,6 @@ def main():
 	(shader_v_main, shader_f_main) = gprog_main.shaders.add([
 			(glrender.ST_VERTEX, shader_src_vertex_0),
 			(glrender.ST_FRAGMENT, shader_src_fragment_0)
-		
 	])
 
 	gprog_main.build()

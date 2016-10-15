@@ -71,7 +71,7 @@ class ObjectCatalog(dict):
 		set to those of the passed object IDs (EG: supplied keys are ignored for updates).
 		In fact, the constructor/adder only accepts lists and dictionaries
 	"""
-	def __init__(self, objects = []):
+	def __init__(self, objects = {}):
 		"""
 			Initializes the catalog with the supplied shaders.
 			Does it inefficiently but we don't expect frequent calls
@@ -90,8 +90,12 @@ class ObjectCatalog(dict):
 			Adds one or multiple indexable objects to this catalog.
 			Note that if multiple objects in the list have the same ID
 			the last one is taken. This is in fact an update
-			
+
 			Returns the list of of added objects
+			
+			Can be called without parameters to add an "all defaults"
+			instance of whatever subclass, but this mode will fail for
+			classes whose constructor has mandatory arguments
 		"""
 		# no matter what they give us, we need something to loop over
 		ret_list = [];
@@ -141,7 +145,7 @@ class Shader(IndexableObject):
 			raise TypeError("Unsupported shader subclass: %s" % (self.__class__.__name__))
 
 		super(Shader, self).__init__()
-		
+
 
 		self.id = glCreateShader(shader_type)
 		if (not isinstance(self.id, long)):
@@ -220,7 +224,7 @@ class ShaderCatalog(ObjectCatalog):
 			settee = (FragmentShader if (settee[0] == ST_FRAGMENT) else VertexShader)(settee[1])
 
 		if (not isinstance(settee, Shader)):
-			raise TypeError("Not an OpenGL shader: %s" % settee)
+			raise TypeError("Not an OpenGL shader or shader definition: %s" % settee)
 		return super(ShaderCatalog, self).__setitem__(key, settee)
 		
 
@@ -239,7 +243,7 @@ class Program(IndexableObject):
 		about not leaving shaders attached to the program at all times
 
 	"""
-	def __init__(self, shaders = [], build = False, activate = False):
+	def __init__(self, shaders = {}, build = False, activate = False):
 		"""
 			Just a collection of shaders.
 			"build" indicates whether or not the build() method should be called at init.
@@ -313,7 +317,9 @@ class Program(IndexableObject):
 		if (not self.linked):
 			raise OpenGLStateException("Program is not linked")
 		glUseProgram(self.id)
-		
+		return 0;
+
+
 
 		return True
 
