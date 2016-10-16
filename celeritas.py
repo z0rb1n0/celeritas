@@ -114,17 +114,14 @@ def main():
 			(glrender.ST_FRAGMENT, shader_src_fragment_0)
 	])
 
-	gprog_main	.build()
-	
-	
+	gprog_main.build()
+
 
 	crosshair_uniform = glGetUniformLocation(gprog_main, "crosshair_position")
 	rgba_uniform = glGetUniformLocation(gprog_main, "obj_rgba")
 
-	bin = gprog_main.binary;
-	print(bin)
-	gprog_main.binary = bin
-	exit(0)
+
+
 
 	vertices = [
 		-0.2, -0.2,  0.0,		# bottom left
