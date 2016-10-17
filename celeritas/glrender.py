@@ -27,10 +27,6 @@ from OpenGL.GL import shaders
 logger = logging.getLogger(__name__)
 
 
-# blatantly aliasing OpenGL's own qualifiers not to clash
-# with other instances
-ST_VERTEX = GL_VERTEX_SHADER
-ST_FRAGMENT = GL_FRAGMENT_SHADER
 
 
 
@@ -74,40 +70,117 @@ UNIFORM_TYPE_MAPS = {ut.real: ut for ut in (
 
 
 
-# glUniform1f(GL_FLOAT);
-# glUniform2f(GL_FLOAT_VEC2);
-# glUniform3f(GL_FLOAT_VEC3);
-# glUniform4f(GL_FLOAT_VEC4);
-# glUniform1i(GL_INT);
-# glUniform2i(GL_INT_VEC2);
-# glUniform3i(GL_INT_VEC3);
-# glUniform4i(GL_INT_VEC4);
-# glUniform1ui(GL_UNSIGNED_INT);
-# glUniform2ui(GL_UNSIGNED_INT_VEC2);
-# glUniform3ui(GL_UNSIGNED_INT_VEC3);
-# glUniform4ui(GL_UNSIGNED_INT_VEC4);
+# UNIFORM_FUNCTION_MAPS for each uniform type, determines what function is called.
+# Parameters are passed as-is and not validated
+UNIFORM_FUNCTION_MAPS = {
+	GL_INT:                                           glProgramUniform1i,
+	GL_UNSIGNED_INT:                                  glProgramUniform1ui,
+	GL_FLOAT:                                         glProgramUniform1f,
+	GL_DOUBLE:                                        glProgramUniform1f,
+	GL_IMAGE_1D:                                      glProgramUniform1i,
+	GL_IMAGE_2D:                                      glProgramUniform1i,
+	GL_IMAGE_3D:                                      glProgramUniform1i,
+	GL_IMAGE_2D_RECT:                                 glProgramUniform1i,
+	GL_IMAGE_CUBE:                                    glProgramUniform1i,
+	GL_IMAGE_BUFFER:                                  glProgramUniform1i,
+	GL_IMAGE_1D_ARRAY:                                glProgramUniform1i,
+	GL_IMAGE_2D_ARRAY:                                glProgramUniform1i,
+	GL_IMAGE_2D_MULTISAMPLE:                          glProgramUniform1i,
+	GL_IMAGE_2D_MULTISAMPLE_ARRAY:                    glProgramUniform1i,
+	GL_INT_IMAGE_1D:                                  glProgramUniform1i,
+	GL_INT_IMAGE_2D:                                  glProgramUniform1i,
+	GL_INT_IMAGE_3D:                                  glProgramUniform1i,
+	GL_INT_IMAGE_2D_RECT:                             glProgramUniform1i,
+	GL_INT_IMAGE_CUBE:                                glProgramUniform1i,
+	GL_INT_IMAGE_BUFFER:                              glProgramUniform1i,
+	GL_INT_IMAGE_1D_ARRAY:                            glProgramUniform1i,
+	GL_INT_IMAGE_2D_ARRAY:                            glProgramUniform1i,
+	GL_INT_IMAGE_2D_MULTISAMPLE:                      glProgramUniform1i,
+	GL_INT_IMAGE_2D_MULTISAMPLE_ARRAY:                glProgramUniform1i,
+	GL_UNSIGNED_INT_IMAGE_1D:                         glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_2D:                         glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_3D:                         glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_2D_RECT:                    glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_CUBE:                       glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_BUFFER:                     glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_1D_ARRAY:                   glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_2D_ARRAY:                   glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_2D_MULTISAMPLE:             glProgramUniform1ui,
+	GL_UNSIGNED_INT_IMAGE_2D_MULTISAMPLE_ARRAY:       glProgramUniform1ui,
+	GL_UNSIGNED_INT_ATOMIC_COUNTER:                   glProgramUniform1ui,
+	GL_SAMPLER_2D_MULTISAMPLE:                        glProgramUniform2i,
+	GL_INT_SAMPLER_2D_MULTISAMPLE:                    glProgramUniform1i,
+	GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE:           glProgramUniform1ui,
+	GL_SAMPLER_2D_MULTISAMPLE_ARRAY:                  glProgramUniform2i,
+	GL_INT_SAMPLER_2D_MULTISAMPLE_ARRAY:              glProgramUniform1i,
+	GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY:     glProgramUniform1ui,
+	GL_DOUBLE_MAT2:                                   glProgramUniformMatrix2fv,
+	GL_DOUBLE_MAT3:                                   glProgramUniformMatrix3fv,
+	GL_DOUBLE_MAT4:                                   glProgramUniformMatrix4fv,
+	GL_DOUBLE_MAT2x3:                                 glProgramUniformMatrix2x3fv,
+	GL_DOUBLE_MAT2x4:                                 glProgramUniformMatrix2x4fv,
+	GL_DOUBLE_MAT3x2:                                 glProgramUniformMatrix3x2fv,
+	GL_DOUBLE_MAT3x4:                                 glProgramUniformMatrix3x4fv,
+	GL_DOUBLE_MAT4x2:                                 glProgramUniformMatrix4x2fv,
+	GL_DOUBLE_MAT4x3:                                 glProgramUniformMatrix4x3fv,
+	GL_FLOAT_VEC2:                                    glProgramUniform2f,
+	GL_FLOAT_VEC3:                                    glProgramUniform3f,
+	GL_FLOAT_VEC4:                                    glProgramUniform4f,
+	GL_INT_VEC2:                                      glProgramUniform2i,
+	GL_INT_VEC3:                                      glProgramUniform3i,
+	GL_INT_VEC4:                                      glProgramUniform4i,
+	GL_BOOL:                                          glProgramUniform1ui,
+	GL_BOOL_VEC2:                                     glProgramUniform2ui,
+	GL_BOOL_VEC3:                                     glProgramUniform3ui,
+	GL_BOOL_VEC4:                                     glProgramUniform4ui,
+	GL_FLOAT_MAT2:                                    glProgramUniformMatrix2fv,
+	GL_FLOAT_MAT3:                                    glProgramUniformMatrix3fv,
+	GL_FLOAT_MAT4:                                    glProgramUniformMatrix4fv,
+	GL_SAMPLER_1D:                                    glProgramUniform1i,
+	GL_SAMPLER_2D:                                    glProgramUniform2i,
+	GL_SAMPLER_3D:                                    glProgramUniform3i,
+	GL_SAMPLER_CUBE:                                  glProgramUniform1i,
+	GL_SAMPLER_1D_SHADOW:                             glProgramUniform1i,
+	GL_SAMPLER_2D_SHADOW:                             glProgramUniform2i,
+	GL_SAMPLER_2D_RECT:                               glProgramUniform2i,
+	GL_SAMPLER_2D_RECT_SHADOW:                        glProgramUniform2i,
+	GL_FLOAT_MAT2x3:                                  glProgramUniformMatrix2x3fv,
+	GL_FLOAT_MAT2x4:                                  glProgramUniformMatrix2x4fv,
+	GL_FLOAT_MAT3x2:                                  glProgramUniformMatrix3x2fv,
+	GL_FLOAT_MAT3x4:                                  glProgramUniformMatrix3x4fv,
+	GL_FLOAT_MAT4x2:                                  glProgramUniformMatrix4x2fv,
+	GL_FLOAT_MAT4x3:                                  glProgramUniformMatrix4x3fv,
+	GL_SAMPLER_1D_ARRAY:                              glProgramUniform1i,
+	GL_SAMPLER_2D_ARRAY:                              glProgramUniform2i,
+	GL_SAMPLER_BUFFER:                                glProgramUniform1i,
+	GL_SAMPLER_1D_ARRAY_SHADOW:                       glProgramUniform1i,
+	GL_SAMPLER_2D_ARRAY_SHADOW:                       glProgramUniform2i,
+	GL_SAMPLER_CUBE_SHADOW:                           glProgramUniform1i,
+	GL_UNSIGNED_INT_VEC2:                             glProgramUniform2ui,
+	GL_UNSIGNED_INT_VEC3:                             glProgramUniform3ui,
+	GL_UNSIGNED_INT_VEC4:                             glProgramUniform4ui,
+	GL_INT_SAMPLER_1D:                                glProgramUniform1i,
+	GL_INT_SAMPLER_2D:                                glProgramUniform1i,
+	GL_INT_SAMPLER_3D:                                glProgramUniform1i,
+	GL_INT_SAMPLER_CUBE:                              glProgramUniform1i,
+	GL_INT_SAMPLER_2D_RECT:                           glProgramUniform1i,
+	GL_INT_SAMPLER_1D_ARRAY:                          glProgramUniform1i,
+	GL_INT_SAMPLER_2D_ARRAY:                          glProgramUniform1i,
+	GL_INT_SAMPLER_BUFFER:                            glProgramUniform1i,
+	GL_UNSIGNED_INT_SAMPLER_1D:                       glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_2D:                       glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_3D:                       glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_CUBE:                     glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_2D_RECT:                  glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_1D_ARRAY:                 glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:                 glProgramUniform1ui,
+	GL_UNSIGNED_INT_SAMPLER_BUFFER:                   glProgramUniform1ui,
+	GL_DOUBLE_VEC2:                                   glProgramUniform2f,
+	GL_DOUBLE_VEC3:                                   glProgramUniform3f,
+	GL_DOUBLE_VEC4:                                   glProgramUniform4f
+}
 
-# glUniform1fv( GLint location, GLsizei count, const GLfloat *value);
-# glUniform2fv( GLint location, GLsizei count, const GLfloat *value);
-# glUniform3fv( GLint location, GLsizei count, const GLfloat *value);
-# glUniform4fv( GLint location, GLsizei count, const GLfloat *value);
-# glUniform1iv( GLint location, GLsizei count, const GLint *value);
-# glUniform2iv( GLint location, GLsizei count, const GLint *value);
-# glUniform3iv( GLint location, GLsizei count, const GLint *value);
-# glUniform4iv( GLint location, GLsizei count, const GLint *value);
-# glUniform1uiv( GLint location, GLsizei count, const GLuint *value);
-# glUniform2uiv( GLint location, GLsizei count, const GLuint *value);
-# glUniform3uiv( GLint location, GLsizei count, const GLuint *value);
-# glUniform4uiv( GLint location, GLsizei count, const GLuint *value);
-# glUniformMatrix2fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix3fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix4fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix2x3fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix3x2fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix2x4fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix4x2fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix3x4fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
-# glUniformMatrix4x3fv( GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+
 
 
 # Uniforms we care about. They're directly mapped as properties in  the uniform objects
@@ -224,9 +297,9 @@ class Shader(IndexableObject):
 			The shader is initialized and built by __init__,
 		"""
 		if (isinstance(self, VertexShader)):
-			shader_type = ST_VERTEX
+			shader_type = GL_VERTEX_SHADER
 		elif (isinstance(self, FragmentShader)):
-			shader_type = ST_FRAGMENT
+			shader_type = GL_FRAGMENT_SHADER
 		else:
 			raise TypeError("Unsupported shader subclass: %s" % (self.__class__.__name__))
 
@@ -296,31 +369,31 @@ class Shader(IndexableObject):
 class VertexShader(Shader):
 	"""Just a shorthand wrapper around Shader to avoid specifying more args"""
 	pass
-#super(VertexShader, self).__init__(shader_source = shader_source, shader_type = ST_VERTEX)
 
 class FragmentShader(Shader):
 	"""Just a shorthand wrapper around Shader to avoid specifying more args"""
 	pass
-#super(FragmentShader, self).__init__(shader_source = shader_source, shader_type = ST_FRAGMENT)
 
 
 class ShaderCatalog(ObjectCatalog):
 	"""
 		This subclass prevents non-shaders from entering the catalog.
 
-		It also automagically turns 2 member tuples/lists comprised of (ST_*, source) into
-		shader objects by calling the appropriate constructor
+		It also automagically turns 2 member tuples/lists
+		shader objects by calling the appropriate constructor.
+		
+		The tuple format is (shader_class, source)
 	"""
 	def __setitem__(self, key, settee):
 		
 		if (isinstance(settee, (tuple, list))):
 			if (len(settee) < 2):
 				raise TypeError("Insufficient number of members to construct a shader")
-			if (settee[0] not in (ST_VERTEX, ST_FRAGMENT)):
+			if ((settee[0] is not VertexShader) and (settee[0] is not FragmentShader)):
 				raise TypeError("Invalid shader type: %d" % (settee[0]))
 
 			# I hate rewriting arguments, and yet here I am rewriting an array into an object
-			settee = (FragmentShader if (settee[0] == ST_FRAGMENT) else VertexShader)(settee[1])
+			settee = settee[0](settee[1])
 
 		if (not isinstance(settee, Shader)):
 			raise TypeError("Not an OpenGL shader or shader definition: %s" % settee)
@@ -368,7 +441,7 @@ class Uniform(IndexableObject):
 		
 		# some members are assumed to be there as the uniform cannot exist without them
 		self.location = uniform_properties[GL_LOCATION]
-		self.type = UNIFORM_TYPE_MAPS[uniform_properties[GL_TYPE]].name
+		self.type = UNIFORM_TYPE_MAPS[uniform_properties[GL_TYPE]]
 
 
 	def __str__(self):
@@ -632,12 +705,16 @@ class Program(IndexableObject):
 		return len(self._uniforms)
 
 
-	def uniform_set(self, uniform, new_value):
+	def uniform_set(self, uniform, *new_data):
 		"""
 			Simply attempts to change the value of a uniform to w/e is passed.
 			Expected to croak if a value of the wrong type/dimensions is passed.
+
+			Can accept both a uniform name or an object as the first argument.
 			
-			Can accept both a uniform name or an object as the first argument
+			The passed parameters are passed directly to glProgramUniform(program, uniform, *your_args).
+			
+			No checks are performed ATM, and given how complex some of them could be that could affect performance
 		"""
 		if (isinstance(uniform, str)):
 			# we resolve it off our uniforms "cache"
@@ -648,6 +725,7 @@ class Program(IndexableObject):
 
 		# now, what we need to do is resolve the uniform type into the correct
 		# type-specific OpenGL function
+		UNIFORM_FUNCTION_MAPS[uniform.type](self.id, uniform.location, *new_data)
 		
 
 
@@ -689,6 +767,12 @@ class Context(object):
 		"""
 			Simple initialization based on a context number
 		"""
+
+		self.vendor = glGetString(GL_VENDOR)
+		self.gl_version = glGetString(GL_VERSION)
+		self.glsl_version = glGetString(GL_SHADING_LANGUAGE_VERSION)
+		self.renderer = glGetString(GL_RENDERER)
+
 		self.id = context_id
 		self.shaders = ShaderCatalog()
 		self.programs = ProgramCatalog()
