@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 
 
-
 # in order to quickly translate numerical uniform type
 # identifiers returned by OpenGL calls into their pyOpenGL constants,
 # we map them out indexing them by value.
@@ -795,15 +794,87 @@ class Context(object):
 	def __repr__(self):
 		return "<" + self.__str() + ">"
 
-class Buffer(object):
+
+class Buffer(IndexableObject):
 	"""
 		A generic OpenGL buffer. Automatically chooses the data type based on the number of
 		elements
 	"""
+	def __new__(cls, *args, **kwargs):
+		if (cls is Shader):
+			raise TypeError("Class %s cannot be instantiated directly" % (cls.__name__))
+		return object.__new__(cls, *args, **kwargs)
+
+
 	def __init__(self,
-		
+		values,
+		m_type = GL_FLOAT,
+		target = GL_STATIC_DRAW
 	):
-		pass
+		"""
+			GL_STREAM_DRAW, GL_STREAM_READ, GL_STREAM_COPY, GL_STATIC_DRAW, GL_STATIC_READ, GL_STATIC_COPY, GL_DYNAMIC_DRAW, GL_DYNAMIC_READ, or GL_DYNAMIC_COPY
+		"""
+
+		if (isinstance(self, ArrayBuffer)):
+			buffer_type = GL_ARRAY_BUFFER
+		else:
+			raise TypeError("Unsupported buffer type: `%s`" % (self.__class__.__name__))
+
+		# we translate the passed GL_* type into a type for the cast
+		if (m_type == GL_BYTE): cast_type = GLchar
+		elif (m_type == GL_UNSIGNED_BYTE): cast_type = GLuchar
+		elif (m_type == GL_SHORT): cast_type = GLshort
+		elif (m_type == GL_UNSIGNED_SHORT): cast_type = GLushort
+		elif (m_type == GL_INT): cast_type = GLint
+		elif (m_type == GL_UNSIGNED_INT): cast_type = GLushort
+		elif (m_type in [GL_FLOAT, GL_DOUBLE]): cast_type = GLfloat
+		else:
+			raise TypeError("Unsupported buffer element type: `%s`" % (str(m_type)[0:64]))
+
+
+
+		super(Buffer, self).__init__()
+
+		bid = GLuint()
+		glGenBuffers(1, bid)
+		if (bid is not None):
+			self.id = bid.value
+		else:
+			raise OpenGLCreationException("Cannot create buffer")
+
+
+		try:
+			glBindBuffer(buffer_type, self.id)
+			glBufferData(
+				buffer_type,
+				ctypes.sizeof(cast_type) * len(values),
+				(cast_type * len(values))(*values),
+				target
+			)
+			glBindBuffer(buffer_type, 0)
+		except:
+			raise OpenGLCreationException("Cannot bind/hydrate buffer #%d", (self.id))
+
+
+# 		GL_ARRAY_BUFFER,
+# 		GL_ATOMIC_COUNTER_BUFFER,
+# 		GL_COPY_READ_BUFFER,
+# 		GL_COPY_WRITE_BUFFER,
+# 		GL_DISPATCH_INDIRECT_BUFFER,
+# 		GL_DRAW_INDIRECT_BUFFER,
+# 		GL_ELEMENT_ARRAY_BUFFER,
+# 		GL_PIXEL_PACK_BUFFER,
+# 		GL_PIXEL_UNPACK_BUFFER,
+# 		GL_QUERY_BUFFER,
+# 		GL_SHADER_STORAGE_BUFFER,
+# 		GL_TEXTURE_BUFFER,
+# 		GL_TRANSFORM_FEEDBACK_BUFFER,
+# 		GL_UNIFORM_BUFFER,
+
+class ArrayBuffer(Buffer):
+	"""Just a shorthand wrapper around Buffer to avoid specifying more args"""
+	pass
+
 
 class VertexBuffer(Buffer):
 	"""

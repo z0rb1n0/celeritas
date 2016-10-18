@@ -63,10 +63,6 @@ def main():
 	)
 
 
-	print("Vendor:          %s" % (glGetString(GL_VENDOR)))
-	print("Opengl version:  %s" % (glGetString(GL_VERSION)))
-	print("GLSL Version:    %s" % (glGetString(GL_SHADING_LANGUAGE_VERSION)))
-	print("Renderer:        %s" % (glGetString(GL_RENDERER)))
 
 
 
@@ -110,17 +106,11 @@ def main():
 	main_context = glrender.Context(main_window.gl_context)
 	(gprog_main,) = main_context.programs.add()
 	(shader_v_main, shader_f_main) = gprog_main.shaders.add([
-			(glrender.ST_VERTEX, shader_src_vertex_0),
-			(glrender.ST_FRAGMENT, shader_src_fragment_0)
+			(glrender.VertexShader, shader_src_vertex_0),
+			(glrender.FragmentShader, shader_src_fragment_0)
 	])
 
 	gprog_main.build()
-
-
-	crosshair_uniform = glGetUniformLocation(gprog_main, "crosshair_position")
-	rgba_uniform = glGetUniformLocation(gprog_main, "obj_rgba")
-
-
 
 
 	vertices = [
@@ -137,12 +127,14 @@ def main():
 
 
 	print("Generating Vertex Array Object")
-	vao_main = glGenVertexArrays(1)
+	vao_main = GLuint()
+	glGenVertexArrays(1, vao_main)
 	print("Binding Vertex Array Object")
 	glBindVertexArray(vao_main)
 
 	print("Generating vertex buffer")
-	vbo_main = glGenBuffers(1)
+	vbo_main = GLuint()
+	glGenBuffers(1, vbo_main)
 	print("Binding vertex buffer")
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_main)
 	print("Storing data in the vertex buffer")
@@ -228,9 +220,11 @@ def main():
 
 		#print("Activating program")
 		glUseProgram(gprog_main)
-		glUniform2f(crosshair_uniform, rel_x, rel_y)
 
-		glUniform4f(rgba_uniform, 0.0, 0.0, 0.0, 1.0)
+		#glUniform2f(crosshair_uniform, rel_x, rel_y)
+		gprog_main.uniform_set("crosshair_position", rel_x, rel_y)
+		gprog_main.uniform_set("obj_rgba", 0.0, 0.0, 0.0, 1.0)
+
 
 
 		glBindVertexArray(vao_main)
@@ -250,8 +244,8 @@ def main():
 
 	logger.info("The last window was closed. Shutting down")
 
-	glDeleteVertexArrays(1, [vao_main])
-	glDeleteBuffers(1, [vbo_main])
+	glDeleteVertexArrays(1, vao_main)
+	glDeleteBuffers(1, vbo_main)
 
 
 	del(main_window);
