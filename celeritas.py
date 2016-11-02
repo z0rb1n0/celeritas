@@ -104,7 +104,7 @@ def main():
 		"""
 
 	main_context = glrender.Context(main_window.gl_context)
-	(gprog_main,) = main_context.programs.add()
+	(gprog_main, ) = main_context.programs.add()
 	(shader_v_main, shader_f_main) = gprog_main.shaders.add([
 			(glrender.VertexShader, shader_src_vertex_0),
 			(glrender.FragmentShader, shader_src_fragment_0)

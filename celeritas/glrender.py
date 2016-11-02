@@ -27,6 +27,18 @@ from OpenGL.GL import shaders
 logger = logging.getLogger(__name__)
 
 
+# this translates GL_* constant types to pyOpenGL's types
+TYPES_MAPS = {
+	GL_BYTE: GLbyte,
+	GL_UNSIGNED_BYTE: GLubyte,
+	GL_SHORT: GLshort,
+	GL_UNSIGNED_SHORT: GLushort,
+	GL_INT: GLint,
+	GL_UNSIGNED_INT: GLushort,
+	GL_FLOAT: GLfloat,
+	GL_DOUBLE: GLfloat
+}
+
 
 
 # in order to quickly translate numerical uniform type
@@ -66,6 +78,37 @@ UNIFORM_TYPE_MAPS = {ut.real: ut for ut in (
 )}
 
 
+
+# possible usage patterns for buffers
+BUFFER_USAGE_PATTERNS = (
+	GL_STREAM_DRAW,
+	GL_STREAM_READ,
+	GL_STREAM_COPY,
+	GL_STATIC_DRAW,
+	GL_STATIC_READ,
+	GL_STATIC_COPY,
+	GL_DYNAMIC_DRAW,
+	GL_DYNAMIC_READ,
+	GL_DYNAMIC_COPY
+)
+
+# possible targets for buffers
+BUFFER_BIND_TARGETS = (
+	GL_ARRAY_BUFFER,
+	GL_ATOMIC_COUNTER_BUFFER,
+	GL_COPY_READ_BUFFER,
+	GL_COPY_WRITE_BUFFER,
+	GL_DISPATCH_INDIRECT_BUFFER,
+	GL_DRAW_INDIRECT_BUFFER,
+	GL_ELEMENT_ARRAY_BUFFER,
+	GL_PIXEL_PACK_BUFFER,
+	GL_PIXEL_UNPACK_BUFFER,
+	GL_QUERY_BUFFER,
+	GL_SHADER_STORAGE_BUFFER,
+	GL_TEXTURE_BUFFER,
+	GL_TRANSFORM_FEEDBACK_BUFFER,
+	GL_UNIFORM_BUFFER
+)
 
 
 
@@ -202,10 +245,11 @@ class OpenGLCreationException(OpenGLException):
 class OpenGLBuildException(OpenGLException):
 	""" When building shaders goes awry """
 	pass
-
-
 class OpenGLStateException(OpenGLException):
 	""" When your objects are not ready to do what you want to """
+	pass
+class OpenGLOperationException(OpenGLException):
+	""" Some generic operation went toes up """
 	pass
 
 
@@ -221,25 +265,87 @@ class IndexableObject(object):
 	def __long__(self):
 		return self.id
 
+	def __str__(self):
+		return str(type(self))
+
+	def __repr__(self):
+		"""
+			The representation of indexable objects is always the text wrapped
+			into lt/gt symbols
+		"""
+		return "<" + self.__str__() + ">"
+
 class ObjectCatalog(dict):
 	"""
 		Base type for all OpenGL catalogs that is useful to index by object ID
 		(shaders, buffers, programs...)
 		Although it is a sublclassed dictionary, the keys are always
 		set to those of the passed object IDs (EG: supplied keys are ignored for updates).
-		In fact, the constructor/adder only accepts scalars, lists and dictionaries
+		In fact, the constructor/adder only accepts scalars, lists and dictionaries.
+		
+		A validation mechanism allows to restrict subclasses to a specific
+		set of objects: if self.item_class is not None, only
+		instances of that class are accepted. Moreover, when item_class is set,
+		the constructor of that class is used to initialize the objects for easy
+		mass-instantiation via
+		
+		my_catalog = WhateverSubclassOfObjectCatalog([
+			[constructor_arg_1, constructor_arg-2],
+			[constructor_arg_1, constructor_arg-2],
+			...
+		])
+		
+		
+		This technique is overridden by some exceptional subclasses such as shaders,
+		as there are many subtypes with common behavior that can live in the same
+		list
+		
 	"""
-	def __init__(self, objects = {}):
+	item_class = None
+
+	def __init__(self, objects = None):
 		"""
 			Initializes the catalog with the supplied shaders.
-			Does it inefficiently but we don't expect frequent calls
-		"""
-		self.add(objects)
+			Does it inefficiently but we don't expect frequent calls.
+			
+		"""		
+		# We're not defaulting to an empty list in "objects" as that makes it
+		# confusing at run-time, but then we've got to test for this
+		if (not (objects is None)):
+			self.add(objects)
 
 	def __setitem__(self, key, settee):
 		""" Some validation """
-		if (not isinstance(settee, IndexableObject)):
-			raise TypeError("Not an OpenGL indexable object : %s" % settee)
+
+		# we do validate only against either test
+		if (self.item_class is not None):
+
+			# we can accept 3 possible type of values: Objects, and all kinds of
+			# iterable/dictionaries for the constructor
+			
+			# here we are rewriting arguments again...
+			if (settee is None):
+				# special case for dumb constructors
+				settee = self.item_class()
+			if (isinstance(settee, (tuple, list))):
+				# positional-based constructor
+				settee = self.item_class(*settee)
+			elif (isinstance(settee, (dict))):
+				# keyword-based constructor
+				settee = self.item_class(**settee)
+			else:
+				# any scalar is treated as an object. Nothing happens apart
+				# from some basic validation
+				if (not isinstance(settee, self.item_class)):
+					raise TypeError("%s only accepts %s-type items. An object of type %s was passed instead" %
+						(self.__class__.__name__, self.item_class.__name__, settee.__class__.__name__)
+					)
+					return None
+		else:
+			# unfiltered case
+			if (not isinstance(settee, IndexableObject)):
+				raise TypeError("Not an OpenGL indexable object : %s" % settee)
+			
 		super(ObjectCatalog, self).__setitem__(settee.id, settee)
 		return settee
 
@@ -251,7 +357,7 @@ class ObjectCatalog(dict):
 
 			Returns the list of of added objects
 			
-			Can be called without parameters to add an "all defaults"
+			Can be called without parameters to add a "vanilla"
 			instance of whatever subclass, but this mode will fail for
 			classes whose constructor has mandatory arguments
 		"""
@@ -347,6 +453,10 @@ class Shader(IndexableObject):
 			raise OpenGLBuildException("Shader compilation failed. Error: `%s`" % self.info_log)
 
 
+	def __del__(self):
+		""" We just try to get rid of it """
+		glDeleteShader(self.id)
+
 	def __int__(self):
 		""" This cast is unsafe but handy """
 		return self.id
@@ -361,8 +471,6 @@ class Shader(IndexableObject):
 			len(self.source)
 		))
 
-	def __repr__(self):
-		return "<" + self.__str__() + ">"
 
 
 class VertexShader(Shader):
@@ -377,17 +485,20 @@ class FragmentShader(Shader):
 class ShaderCatalog(ObjectCatalog):
 	"""
 		This subclass prevents non-shaders from entering the catalog.
-
-		It also automagically turns 2 member tuples/lists
-		shader objects by calling the appropriate constructor.
-		
-		The tuple format is (shader_class, source)
+		The tuple format is (shader_class, source), which is an exception
+		for object catalogs
 	"""
+	item_class = Shader
+
 	def __setitem__(self, key, settee):
-		
+		"""
+			Shaders handle "constructors argument lists" specially as
+			one of the arguments, the shader class, must be specified
+			in the list. We just call the constructor here
+		"""
 		if (isinstance(settee, (tuple, list))):
 			if (len(settee) < 2):
-				raise TypeError("Insufficient number of members to construct a shader")
+				raise TypeError("Insufficient number of members. Must supply shader class and constructor arguments")
 			if ((settee[0] is not VertexShader) and (settee[0] is not FragmentShader)):
 				raise TypeError("Invalid shader type: %d" % (settee[0]))
 
@@ -450,36 +561,20 @@ class Uniform(IndexableObject):
 			self.location
 		))
 
-	def __repr__(self):
-		return "<" + self.__str__() + ">"
 			
 
 class UniformCatalog(ObjectCatalog):
 	"""
 		This subclass prevents non-uniforms from entering the catalog.
 
-		Similarly to ShaderCatalog, it also allows one to instantiate it by
-		passing a list/tuple of arguments that can be passed to the Uniform
-		constructor as-is, or a list thereof.
-
+		See the parent class for usage
 
 		A uniform object does not know what program it belongs to:
 		do not mix uniforms from different programs in the same catalog or there
 		will be collisions
 
 	"""
-	def __setitem__(self, key, settee):
-		
-		if (isinstance(settee, (tuple, list))):
-			if (len(settee) < 2):
-				raise TypeError("Insufficient number of members for a Uniform constructor")
-
-			# here I am rewriting arguments again...
-			settee = Uniform(*settee)
-
-		if (not isinstance(settee, Uniform)):
-			raise TypeError("Not a Uniform or constructor arguments for it: %s" % settee)
-		return super(UniformCatalog, self).__setitem__(key, settee)
+	item_class = Uniform
 
 
 class Program(IndexableObject):
@@ -495,7 +590,7 @@ class Program(IndexableObject):
 		about not leaving shaders attached to the program at all times
 
 	"""
-	def __init__(self, shaders = {}, build = False, activate = False):
+	def __init__(self, shaders = None, build = False, activate = False):
 		"""
 			Just a collection of shaders.
 			"build" indicates whether or not the build() method should be called at init.
@@ -532,8 +627,6 @@ class Program(IndexableObject):
 	def __str__(self):
 		return("OpenGL Program #%d, %d shaders: %s" % (self.id, len(self.shaders), self.shaders))
 		
-	def __repr__(self):
-		return "<" + self.__str__() + ">"
 
 
 	@property
@@ -747,14 +840,11 @@ class Program(IndexableObject):
 class ProgramCatalog(ObjectCatalog):
 	"""
 		This subclass simply calls the right constructor no matter what,
-		as no parameters are needed for programs
-	"""
-	def __setitem__(self, key, settee):
-		if (not isinstance(settee, Program)):
-			settee = Program()
-			#raise TypeError("Not an OpenGL program: %s" % settee)
+		as no constructor arguments are needed for programs
 
-		return super(ProgramCatalog, self).__setitem__(key, settee)
+		See the parent class for usage
+	"""
+	item_class = Program
 
 
 class Context(object):
@@ -762,7 +852,7 @@ class Context(object):
 		An OpenGL Context. Very few applications need more than one.
 		A context is generally passed from the windowing system as a number
 	"""
-	def __init__(self, context_id, programs = []):
+	def __init__(self, context_id, programs = None):
 		"""
 			Simple initialization based on a context number
 		"""
@@ -774,7 +864,7 @@ class Context(object):
 
 		self.id = context_id
 		self.shaders = ShaderCatalog()
-		self.programs = ProgramCatalog()
+		self.programs = ProgramCatalog(programs)
 		self.buffers = {}
 		#glViewport(0, 0, guc["video"]["resolution_x"], guc["video"]["resolution_y"])
 
@@ -797,94 +887,244 @@ class Context(object):
 
 class Buffer(IndexableObject):
 	"""
-		A generic OpenGL buffer. Automatically chooses the data type based on the number of
-		elements
+		A generic OpenGL buffer. Just an array of bytes of a specific size.
+		Has a "bind()" convenience method, however at this stage
+		that is not very useful as PyOpenGL does not support glNamedBufferData(),
+		therefore the buffer must be bound when it is initialized.
+
+		OpenGL buffers are immutable so this object is too
+
+		TODO: optimize buffer creation by using an array of wider types as
+		opposed to bytes
 	"""
-	def __new__(cls, *args, **kwargs):
-		if (cls is Shader):
-			raise TypeError("Class %s cannot be instantiated directly" % (cls.__name__))
-		return object.__new__(cls, *args, **kwargs)
-
-
-	def __init__(self,
-		values,
-		m_type = GL_FLOAT,
-		target = GL_STATIC_DRAW
-	):
+	def __init__(self, buffer_data, usage = GL_READ_WRITE, bind_target = GL_ARRAY_BUFFER, retain_data = False):
 		"""
-			GL_STREAM_DRAW, GL_STREAM_READ, GL_STREAM_COPY, GL_STATIC_DRAW, GL_STATIC_READ, GL_STATIC_COPY, GL_DYNAMIC_DRAW, GL_DYNAMIC_READ, or GL_DYNAMIC_COPY
+			Simply initializes the buffer and eventually binds it if required
+			
+			Arguments:
+				buffer_data:		the buffer string. Can be an list/tuple of
+									numerical byte values (unsigned), or any of the types
+									glBufferData accepts in the data argument
+				usage:				the expected usage pattern for this buffer
+				bind_target:		the bind target
+				retain_data:		whether or not the buffer data should be
+									kept around by the object after it's been
+									sent to the renderer memory
 		"""
-
-		if (isinstance(self, ArrayBuffer)):
-			buffer_type = GL_ARRAY_BUFFER
-		else:
-			raise TypeError("Unsupported buffer type: `%s`" % (self.__class__.__name__))
-
-		# we translate the passed GL_* type into a type for the cast
-		if (m_type == GL_BYTE): cast_type = GLchar
-		elif (m_type == GL_UNSIGNED_BYTE): cast_type = GLuchar
-		elif (m_type == GL_SHORT): cast_type = GLshort
-		elif (m_type == GL_UNSIGNED_SHORT): cast_type = GLushort
-		elif (m_type == GL_INT): cast_type = GLint
-		elif (m_type == GL_UNSIGNED_INT): cast_type = GLushort
-		elif (m_type in [GL_FLOAT, GL_DOUBLE]): cast_type = GLfloat
-		else:
-			raise TypeError("Unsupported buffer element type: `%s`" % (str(m_type)[0:64]))
-
-
-
 		super(Buffer, self).__init__()
+
+		self.data = None
+		self.last_bound_to = None
+
+		if (isinstance(buffer_data, (bytes, str))):
+			self.data = (GLchar * len(buffer_data))()
+			if isinstance(buffer_data, (str)):
+				self.data.value = buffer_data
+			else:
+				self.data.raw = buffer_data
+		elif (isinstance(buffer_data, (tuple, list))):
+			self.data = (GLubyte * len(buffer_data))(*buffer_data)
+		else:
+			self.data = buffer_data
+
+		self.size = len(buffer_data)
 
 		bid = GLuint()
 		glGenBuffers(1, bid)
 		if (bid is not None):
 			self.id = bid.value
 		else:
-			raise OpenGLCreationException("Cannot create buffer")
+			raise OpenGLCreationException("Buffer generation failed")
 
 
+		# sigh
+		self.bind(bind_target)
 		try:
-			glBindBuffer(buffer_type, self.id)
 			glBufferData(
-				buffer_type,
-				ctypes.sizeof(cast_type) * len(values),
-				(cast_type * len(values))(*values),
-				target
+				bind_target,
+				len(buffer_data),
+				self.data,
+				usage
 			)
-			glBindBuffer(buffer_type, 0)
+		except(Exception) as e:
+			raise OpenGLCreationException("Unable to initialize data store for buffer #%d", (self.id,))
+			
+
+	def bind(self, target = GL_ARRAY_BUFFER):
+		""" Attempts to bind the specified buffer """
+		try:
+			glBindBuffer(target, self.id)
+			self.last_bound_to = target
 		except:
-			raise OpenGLCreationException("Cannot bind/hydrate buffer #%d", (self.id))
+			raise OpenGLOperationException("Bind of buffer #%d failed", (self.id,))
+
+	def __str__(self):
+		bind_str = (("Last bound to %s" % self.last_bound_to) if (self.last_bound_to is not None) else "Never bound")
+		return("OpenGL Buffer Object #%d, %d bytes. %s" % (self.id, self.size, bind_str))
 
 
-# 		GL_ARRAY_BUFFER,
-# 		GL_ATOMIC_COUNTER_BUFFER,
-# 		GL_COPY_READ_BUFFER,
-# 		GL_COPY_WRITE_BUFFER,
-# 		GL_DISPATCH_INDIRECT_BUFFER,
-# 		GL_DRAW_INDIRECT_BUFFER,
-# 		GL_ELEMENT_ARRAY_BUFFER,
-# 		GL_PIXEL_PACK_BUFFER,
-# 		GL_PIXEL_UNPACK_BUFFER,
-# 		GL_QUERY_BUFFER,
-# 		GL_SHADER_STORAGE_BUFFER,
-# 		GL_TEXTURE_BUFFER,
-# 		GL_TRANSFORM_FEEDBACK_BUFFER,
-# 		GL_UNIFORM_BUFFER,
 
-class ArrayBuffer(Buffer):
-	"""Just a shorthand wrapper around Buffer to avoid specifying more args"""
-	pass
+class VertexAttribute(IndexableObject):
+	"""
+		A vertex attribute within the context of a vertex buffer definition.
+		An attribute unique identifier is its offset in the pointer stride,
+		and the name is merely an indication.
+	"""
+	def __init__(self,
+		att_offset = 0,
+		att_type = GL_FLOAT,
+		att_name = None
+	):
+		"""
+			Arguments:
+			name: 					uniform name, should be unique per program
+			uniform_properties:		is a dictionary indexed by the GLenums that
+									glGetProgramResourceiv accepts as property identifiers
+		"""
+		super(VertexAttribute, self).__init__()
+		self.id = att_offset
+		self.type = att_type
+		try:
+			self.c_type = TYPES_MAPS[att_type]
+		except KeyError:
+			raise TypeError("Unsupported buffer element type: `%s`" % (str(att_type)[0:64]))
+		self.name = (str(att_name) if (att_name is not None) else str(att_offset))
+
+
+	def __str__(self):
+		return ("OpenGL Vertex Attribute at offset %d, name: `%s` type: %s(%s, length: %d)" % (
+			self.id,
+			self.name,
+			self.type.name,
+			self.c_type.__name__,
+			ctypes.sizeof(self.c_type)
+		))
+
+
+class VertexAttributeCatalog(ObjectCatalog):
+	"""
+		A vertex buffer has an attribute list associated with it. This is it
+
+
+		See parent class for instantiation details.
+
+		As it is usual for this kind of catalog objects,
+		a vertex attribute object does not know what buffer it belongs to:
+		do not mix attributes from different buffers in the same catalog as
+		they'd have overlapping offset ranges
+
+	"""
+	item_class = VertexAttribute
+	
+	def __init__(self, *args, **kwargs):
+		""" We need to keep track of the stride so that we can maintain proper offsets """
+		self.stride = 0
+		super(VertexAttributeCatalog, self).__init__(*args, **kwargs)
+
+	def __setitem__(self, key, settee):
+		"""
+			Unfortunately, we need to replicate some functionality from the parent class.
+			The current stride is used to set the ID for the next item, but since
+			we need to accept constructor arguments too if need be, and not just objects,
+			the settee may not be an IndexableObject yet. This forces us to do call the
+			constructor from here and feed it the current stride
+		"""
+		if (settee is None):
+			# special case for dumb constructors
+			settee = self.item_class()
+		if (isinstance(settee, (tuple, list))):
+			# positional-based constructor. We replace the first argument
+			# (the id/offset) with the current stride
+			settee = self.item_class(*([self.stride] + settee[1:]))
+		elif (isinstance(settee, (dict))):
+			# keyword-based constructor. We replace that keyword
+			settee.update({"offset": self.stride})
+			settee = self.item_class(**settee)
+		else:
+			if (isinstance(settee, (self.item_class))):
+				settee.id = self.stride
+			else:
+				raise TypeError("Invalid object type: `%s`. Must be `%s`" %
+					(settee.__class__.__name__, self.item_class.__name__)
+				)
+				return None
+
+		super(VertexAttributeCatalog, self).__setitem__(settee.id, settee)
+		self.stride += ctypes.sizeof(settee.c_type)
+		return settee
 
 
 class VertexBuffer(Buffer):
 	"""
-		Vertex Buffer Object representation
+		Vertex buffer abstraction. See constructor docstring for details on
+		instantiation.
+
+		Vertex buffers are backed by a single Buffer object
+		
 	"""
-	def __init__(self
-	):
-		pass
+	def __init__(self, attributes, vertices):
+		"""
+			Constructing a vertex buffer is relatively easy.
+			The function accepts 2 arguments: a list of positional
+			GL_* data types (tuple, list or dict), representing the vertex
+			attributes in the stride (one per vertex attribute)
+			and the list of vertices (tuple or list). The list of vertices
+			of has to be a multiple of the list of attributes
+
+			A dictionary can be passed in the list of arguments, in such
+			case the keys translate into attribute names. If a non-dictionary
+			(or a single scalar) is passed, the attribute names default to
+			string representations of their index in the list
+			
+			Doesn't internally check the attribute count against
+			yglGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &nrAttributes) as that'd
+			be context-depenent.
+			
+			
+			OpenGL buffers are immutable so this object is too. Attribute
+			pointers go with the buffer when it's deleted
+			
+			
+			Examples:
+			
+			vb = VertexBuffer(
+				# normalized x, y, z and greyscale value
+				(GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_UNSIGNED_BYTE),
+				(0.55, 0.11, -0.33, 211)
+			)
+			
+			# with named attributes
+			vb = VertexBuffer(
+				{"x": GL_FLOAT, "y": GL_FLOAT, "z": GL_FLOAT, "val": GL_UNSIGNED_BYTE},
+				(0.55, 0.11, -0.33, 211)
+			)
+
+		"""
+
+		# no matter what was passed in "attributes", we want to be iterating
+		# over key: values, and "key" is always a string
+		# The internal
+		atts = {str(att_k): att_v for (att_k, att_v) in (
+			attributes.items() if isinstance(attributes, (dict)) else enumerate(
+				attributes if isinstance(attributes, (tuple, list)) else ( attributes, )
+			)
+		)}
+		
+		# everything is a list
+		if (not isinstance(vertices, (tuple, list))):
+			vertices = (vertices,)
+		
+		if (len(vertices) % len(atts)):
+			raise ValueError("Vertex data members not ending on a stride boundary. Please ensure len(vertices) is a multiple of your attribute count")
 
 
+		# stride calculation
+		#self.stride = sum(map(ctype.sizeof(
 
+
+		# now that we know for sure
+		print(atts)
+		#print("%s: %s" % (attkey, atttype))
+		
 
 
