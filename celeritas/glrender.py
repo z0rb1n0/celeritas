@@ -892,7 +892,8 @@ class Buffer(IndexableObject):
 		that is not very useful as PyOpenGL does not support glNamedBufferData(),
 		therefore the buffer must be bound when it is initialized.
 
-		OpenGL buffers are immutable so this object is too
+		OpenGL buffers are treated as immutable at this stage,
+		so this object is too
 
 		TODO: optimize buffer creation by using an array of wider types as
 		opposed to bytes
@@ -909,7 +910,8 @@ class Buffer(IndexableObject):
 				bind_target:		the bind target
 				retain_data:		whether or not the buffer data should be
 									kept around by the object after it's been
-									sent to the renderer memory
+									sent to the renderer's memory. When false,
+									the member is set to None
 		"""
 		super(Buffer, self).__init__()
 
@@ -948,7 +950,9 @@ class Buffer(IndexableObject):
 			)
 		except(Exception) as e:
 			raise OpenGLCreationException("Unable to initialize data store for buffer #%d", (self.id,))
-			
+
+		if (not retain_data):
+			self.data = None
 
 	def bind(self, target = GL_ARRAY_BUFFER):
 		""" Attempts to bind the specified buffer """
@@ -957,6 +961,11 @@ class Buffer(IndexableObject):
 			self.last_bound_to = target
 		except:
 			raise OpenGLOperationException("Bind of buffer #%d failed", (self.id,))
+
+
+	def __del__(self):
+		""" Clean up """
+		glDeleteBuffers(1, (self.id,))
 
 	def __str__(self):
 		bind_str = (("Last bound to %s" % self.last_bound_to) if (self.last_bound_to is not None) else "Never bound")
@@ -988,6 +997,7 @@ class VertexAttribute(IndexableObject):
 			self.c_type = TYPES_MAPS[att_type]
 		except KeyError:
 			raise TypeError("Unsupported buffer element type: `%s`" % (str(att_type)[0:64]))
+		self.size = ctypes.sizeof(self.c_type)
 		self.name = (str(att_name) if (att_name is not None) else str(att_offset))
 
 
@@ -997,8 +1007,10 @@ class VertexAttribute(IndexableObject):
 			self.name,
 			self.type.name,
 			self.c_type.__name__,
-			ctypes.sizeof(self.c_type)
+			self.size
 		))
+
+
 
 
 class VertexAttributeCatalog(ObjectCatalog):
@@ -1011,15 +1023,25 @@ class VertexAttributeCatalog(ObjectCatalog):
 		As it is usual for this kind of catalog objects,
 		a vertex attribute object does not know what buffer it belongs to:
 		do not mix attributes from different buffers in the same catalog as
-		they'd have overlapping offset ranges
+		they'd have overlapping offset ranges.
+		
+
+		See the pack() method to efficiently build vertex data blocks
 
 	"""
 	item_class = VertexAttribute
-	
+
+
 	def __init__(self, *args, **kwargs):
 		""" We need to keep track of the stride so that we can maintain proper offsets """
 		self.stride = 0
 		super(VertexAttributeCatalog, self).__init__(*args, **kwargs)
+		
+		# this is a tuple of ctypes instances referring to the relevant offsets
+		# in the packed representation, which is stored _last_packed.
+		# It gets destroyed every time attributes change and rebuilt on first use
+		self._packer = None
+		self._last_packed = None
 
 	def __setitem__(self, key, settee):
 		"""
@@ -1035,7 +1057,7 @@ class VertexAttributeCatalog(ObjectCatalog):
 		if (isinstance(settee, (tuple, list))):
 			# positional-based constructor. We replace the first argument
 			# (the id/offset) with the current stride
-			settee = self.item_class(*([self.stride] + settee[1:]))
+			settee = self.item_class(*([self.stride] + list(settee[1:])))
 		elif (isinstance(settee, (dict))):
 			# keyword-based constructor. We replace that keyword
 			settee.update({"offset": self.stride})
@@ -1050,41 +1072,77 @@ class VertexAttributeCatalog(ObjectCatalog):
 				return None
 
 		super(VertexAttributeCatalog, self).__setitem__(settee.id, settee)
-		self.stride += ctypes.sizeof(settee.c_type)
+		self.stride += settee.size
+		# we reset the packer class to force pack() into rebuilding it
+		self._packer = None
+		self._last_packed = None
 		return settee
 
+	def pack(self, vertex_data):
+		"""
+			The "pack" method can be used to efficiently convert a tuple/list of
+			numbers of the right length into the internal char[] representation
+			based on the catalog members.
+			All it expects is a tuple of numerical values in the same number of
+			as the attributes
+			
+			Returns a GLubyte c_ubyte_Array_# that can be used as a buffer
+		"""
+		
+		if (not self.stride):
+			raise OpenGLStateException("No vertex attributes defined")
 
-class VertexBuffer(Buffer):
+		if (len(vertex_data) != len(self)):
+			raise OpenGLStateException("Wrong number of members. Must match number of attributes (%d)" % (len(self), ))
+		
+		if (self._packer is None):
+			# we rebuild the packer if need be
+			self._last_packed = (GLubyte * self.stride)()
+			self._packer = tuple(att.c_type.from_buffer(self._last_packed, att_off) for att_off, att in sorted(self.items()))
+
+		# unfortunately I could not find a way to to this without a loop as all
+		# indirect attribute addressing methods (eg: setattr) fail with ctypes
+		for aid in range(len(self._packer)):
+			self._packer[aid].value = vertex_data[aid]
+
+		return self._last_packed;
+
+
+
+class VertexBuffer(IndexableObject):
 	"""
 		Vertex buffer abstraction. See constructor docstring for details on
 		instantiation.
 
-		Vertex buffers are backed by a single Buffer object
+		Vertex buffers are backed by a single Buffer object, and therefore
+		share the ID namespace. They however are not a subclass of Buffers,
+		as the instantiation is completely different
 		
 	"""
-	def __init__(self, attributes, vertices):
+	def __init__(self, attributes, vertex_data):
 		"""
 			Constructing a vertex buffer is relatively easy.
-			The function accepts 2 arguments: a list of positional
+			The function accepts 2 arguments: a list of
 			GL_* data types (tuple, list or dict), representing the vertex
 			attributes in the stride (one per vertex attribute)
-			and the list of vertices (tuple or list). The list of vertices
-			of has to be a multiple of the list of attributes
+			and the list of data members (tuple or list). The number of members
+			in the list of vertex data obviously has to be a multiple of the
+			list of attributes
 
-			A dictionary can be passed in the list of arguments, in such
-			case the keys translate into attribute names. If a non-dictionary
+			A dictionary can be passed in the list of attributes, in such
+			case the dict's keys dictate ordering of members (string sorting)
+			and are translated into attribute names. If a non-dictionary
 			(or a single scalar) is passed, the attribute names default to
-			string representations of their index in the list
-			
+			string representations of their order in the iterable
+
 			Doesn't internally check the attribute count against
 			yglGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &nrAttributes) as that'd
 			be context-depenent.
-			
-			
+
 			OpenGL buffers are immutable so this object is too. Attribute
 			pointers go with the buffer when it's deleted
-			
-			
+
+
 			Examples:
 			
 			vb = VertexBuffer(
@@ -1101,30 +1159,49 @@ class VertexBuffer(Buffer):
 
 		"""
 
+		if (not len(attributes)):
+			raise ValueError("Attributes list cannot be empty")
+
+		if (not len(vertex_data)):
+			raise ValueError("Vertices data cannot be empty")
+
 		# no matter what was passed in "attributes", we want to be iterating
-		# over key: values, and "key" is always a string
-		# The internal
-		atts = {str(att_k): att_v for (att_k, att_v) in (
+		# over (type, index/name) and feed them to the constructor in the order they arrived
+		atts = {str(att_n): att_t for (att_n, att_t) in (
 			attributes.items() if isinstance(attributes, (dict)) else enumerate(
 				attributes if isinstance(attributes, (tuple, list)) else ( attributes, )
 			)
 		)}
 		
-		# everything is a list
-		if (not isinstance(vertices, (tuple, list))):
-			vertices = (vertices,)
-		
-		if (len(vertices) % len(atts)):
+
+		if (len(vertex_data) % len(attributes)):
 			raise ValueError("Vertex data members not ending on a stride boundary. Please ensure len(vertices) is a multiple of your attribute count")
 
+		self.attributes = VertexAttributeCatalog(
+			map(lambda ak : ((None,) + (atts[ak], ak)), sorted(atts.keys()))
+		)
+
+		self.id = -1
+
+
+		# the attributes list is now complete and we now how large our buffer
+		# will be
+		# Here comes the difficult part: since the buffer is an array of chars,
+		# we need to break down every element, regardless of binary width,
+		# into 
+
+		
 
 		# stride calculation
-		#self.stride = sum(map(ctype.sizeof(
+		#self.stride = sum(map(ctypes.sizeof, atts.values()))
 
 
 		# now that we know for sure
-		print(atts)
 		#print("%s: %s" % (attkey, atttype))
 		
-
+	def __str__(self):
+		return "OpenGL VertexBuffer. Buffer: #%d. Attributes: %s" % (
+			self.id,
+			self.attributes
+		)
 
