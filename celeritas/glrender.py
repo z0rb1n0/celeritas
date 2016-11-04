@@ -36,7 +36,7 @@ TYPES_MAPS = {
 	GL_INT: GLint,
 	GL_UNSIGNED_INT: GLushort,
 	GL_FLOAT: GLfloat,
-	GL_DOUBLE: GLfloat
+	GL_DOUBLE: GLdouble
 }
 
 
@@ -275,6 +275,7 @@ class IndexableObject(object):
 		"""
 		return "<" + self.__str__() + ">"
 
+
 class ObjectCatalog(dict):
 	"""
 		Base type for all OpenGL catalogs that is useful to index by object ID
@@ -352,14 +353,15 @@ class ObjectCatalog(dict):
 	def add(self, addees = None):
 		"""
 			Adds one or multiple indexable objects to this catalog.
-			Note that if multiple objects in the list have the same ID
+			Note that if multiple objects in the list have the same ID,
 			the last one is taken. This is in fact an update
 
 			Returns the list of of added objects
 			
+
 			Can be called without parameters to add a "vanilla"
-			instance of whatever subclass, but this mode will fail for
-			classes whose constructor has mandatory arguments
+			instance of whatever subclass
+
 		"""
 		# no matter what they give us, we need something to loop over
 		ret_list = [];
@@ -885,51 +887,266 @@ class Context(object):
 		return "<" + self.__str() + ">"
 
 
+
+class BufferMemberDef(IndexableObject):
+	"""
+		Buffers are made of records(structures), and records are made of
+		members. A member identifier is its offset in the record stride,
+		and the name is merely an indication.
+	"""
+	def __init__(self,
+		mem_offset = 0,
+		mem_type = GL_UNSIGNED_BYTE,
+		mem_name = None
+	):
+		"""
+			Arguments:
+			mem_offset:			the offset of the member in the record stride.
+								Does not make much sense outside the context of
+								a record structure
+			mem_type:			a GL_* type constant
+			mem_name: 			just a label. Can be None and in that case it
+								defaults to a string representation of the ID
+		"""
+		super(BufferMemberDef, self).__init__()
+		self.id = mem_offset
+		self.type = mem_type
+		try:
+			self.c_type = TYPES_MAPS[mem_type]
+		except KeyError:
+			raise TypeError("Unsupported buffer attribute type: `%s`" % (str(mem_type)[0:64]))
+		self.size = ctypes.sizeof(self.c_type)
+		self.name = (str(mem_name) if (mem_name is not None) else str(mem_offset))
+
+
+	def __str__(self):
+		return ("OpenGL %s at offset %d, name: `%s` type: %s(%s, length: %d)" % (
+			self.__class__.__name__,
+			self.id,
+			self.name,
+			self.type.name,
+			self.c_type.__name__,
+			self.size
+		))
+
+
+class BufferRecordDef(ObjectCatalog):
+	"""
+
+		A collection of BufferMemberDefs in a specific order.
+		(What a C programmer would call a struct definition)
+
+
+		As it is usual for this kind of catalog objects,
+		a buffer attribute object does not know what buffer it belongs to:
+		do not mix attributes from different buffers in the same catalog as
+		they'd have overlapping offset ranges.
+
+		The IDs of the passed BufferMemberDefs (or their constructors)
+		are ignored: the offset within the record decides what ID they get
+	
+		Offers a pack() method to efficiently build binary records
+
+	"""
+	item_class = BufferMemberDef
+
+	def __init__(self, *args, **kwargs):
+		""" We need to keep track of the stride so that we can maintain proper offsets """
+		self.stride = 0
+		
+		# we index attributes by name, also to prevent dupes
+		self.indexed_members = {}
+		super(BufferRecordDef, self).__init__(*args, **kwargs)
+
+		# this is a tuple of ctypes instances referring to the relevant offsets
+		# in the packed representation, which is stored in .
+		# It gets destroyed every time attributes change and rebuilt on first use
+		self._packer = None
+		self._last_packed = None
+
+	def __setitem__(self, key, settee):
+		"""
+			Unfortunately, we need to replicate some functionality from the parent class.
+			The current stride is used to set the ID for the next item, but since
+			we need to accept constructor arguments too if need be, and not just objects,
+			the settee may not be an IndexableObject yet. This forces us to do call the
+			constructor from here and pass it the current stride
+		"""
+		if (settee is None):
+			# special case for dumb constructors
+			settee = self.item_class()
+		if (isinstance(settee, (tuple, list))):
+			# positional-based constructor. We replace the first argument
+			# (the id/offset) with the current stride
+			settee = self.item_class(*([self.stride] + list(settee[1:])))
+		elif (isinstance(settee, (dict))):
+			# keyword-based constructor. We replace that keyword
+			settee.update({"mem_offset": self.stride})
+			settee = self.item_class(**settee)
+		elif (isinstance(settee, (OpenGL.constant.IntConstant))):
+			# they passed the IntConstant
+			settee = self.item_class(mem_offset = self.stride, mem_type = settee)
+		elif (isinstance(settee, (self.item_class))):
+			# they passed the object itself. We force the internal ID
+			settee.id = self.stride
+		else:
+			raise TypeError("Invalid object type: `%s`. Must be `%s`" %
+				(settee.__class__.__name__, self.item_class.__name__)
+			)
+			return None
+
+		if (settee.name in self.indexed_members):
+			raise ValueError("Duplicate name for %s: %s" % (
+				settee.__class__.__name,
+				settee.name
+			))
+			return None
+
+		self.indexed_members[settee.name] = settee
+		super(BufferRecordDef, self).__setitem__(settee.id, settee)
+		self.stride += settee.size
+		# we reset the packer class to force pack() into rebuilding it
+		self._packer = None
+		self._last_packed = None
+
+		return settee
+
+	def pack(self, member_data):
+		"""
+			Can be used to efficiently encode a sequence of numbericals of the
+			into the internal record binary format.
+			All it expects is a tuple of numerical values in the same amount
+			as the attributes
+
+			Returns a GLchar[] that can be directly used as a buffer
+			
+			TODO: 	Consider implementing support for packing multple records
+					to improve performance
+		"""
+		
+		if (not self.stride):
+			raise OpenGLStateException("No record structure is defined")
+
+		if (len(member_data) != len(self)):
+			raise OpenGLStateException("Wrong number of members. Must match number of attributes (%d)" % (len(self), ))
+
+		if (self._packer is None):
+			# we rebuild the packer if need be
+			self._last_packed = (GLchar * self.stride)()
+			self._packer = tuple(att.c_type.from_buffer(self._last_packed, att_off) for att_off, att in sorted(self.items()))
+
+		# unfortunately I could not find a way to to this without a loop at all
+		# indirect attribute addressing methods (eg: setattr) fail with ctypes
+		# TODO: for a real performance boost, either use itertools or try with ctypes.pointers
+		for aid in range(len(self._packer)):
+			self._packer[aid].value = member_data[aid]
+
+		return self._last_packed;
+
+	def __str__(self):
+		return "OpenGL %s of stride %d. Members: %s" % (
+			self.__class__.__name__,
+			self.stride,
+			super(BufferRecordDef, self).__str__()
+		)
+
 class Buffer(IndexableObject):
 	"""
-		A generic OpenGL buffer. Just an array of bytes of a specific size.
-		Has a "bind()" convenience method, however at this stage
-		that is not very useful as PyOpenGL does not support glNamedBufferData(),
-		therefore the buffer must be bound when it is initialized.
+		A generic OpenGL buffer. Internally it is just an array of GLchar
+		of a given size, but to facilitate interaction from subclasses
+		(eg VertexBuffer) it can be constructed by passing a record definition,
+		as an N-long sequence of GL_* types.
+
+		The corresponding data array lenght must obviously be a multiple of
+		the record members
+
+
+		Has a "bind()" convenience method, however at this stage that is not
+		very useful as PyOpenGL does not support glNamedBufferData(),
+		therefore the buffer must be bound when it is initialized. 
 
 		OpenGL buffers are treated as immutable at this stage,
 		so this object is too
 
-		TODO: optimize buffer creation by using an array of wider types as
-		opposed to bytes
+		TODO: optimize buffer creation by packing/batching
 	"""
-	def __init__(self, buffer_data, usage = GL_READ_WRITE, bind_target = GL_ARRAY_BUFFER, retain_data = False):
+	# this chooses what class defines our record type
+	_record_def_processor = BufferRecordDef
+	def __init__(self,
+		data_types,
+		buffer_data,
+		usage = GL_READ_WRITE,
+		bind_target = GL_ARRAY_BUFFER,
+		retain_data = False
+	):
 		"""
 			Simply initializes the buffer and eventually binds it if required
 			
 			Arguments:
-				buffer_data:		the buffer string. Can be an list/tuple of
-									numerical byte values (unsigned), or any of the types
-									glBufferData accepts in the data argument
+				data_types: 		the desired types for the record members.
+									Passed as-is to BufferRecordDef()
+				buffer_data:		the buffer string. Can be an sequence of
+									numerical byte values (unsigned).
+									Can be any ctypes-compatible array type too,
+									but bear in mind that the internal representation
+									is always a GLubyte[]
 				usage:				the expected usage pattern for this buffer
 				bind_target:		the bind target
 				retain_data:		whether or not the buffer data should be
 									kept around by the object after it's been
 									sent to the renderer's memory. When false,
-									the member is set to None
+									(the default) the member is set to None
+									after glBufferData() is called
 		"""
 		super(Buffer, self).__init__()
 
 		self.data = None
 		self.last_bound_to = None
 
+		if ((buffer_data is None) or (len(buffer_data) == 0)):
+			raise ValueError("Buffers cannot be initialized as empty")
+
+		self.record_def = self._record_def_processor(data_types)
+
+		# some convenience vars
+		i_m = len(self.record_def.indexed_members)
+		r_s = self.record_def.stride
+
+		if (not self.record_def.stride):
+			raise TypeError("Unable to define a buffer without a valid record definition")
+
+		# unfortunately we need to use different checks for different input types (str or sequence)
+		if (isinstance(buffer_data, (bytes, str)) and (len(buffer_data) % r_s)):
+			raise ValueError("Buffer data size is not a multpile of record stride")
+
+		if (isinstance(buffer_data, (tuple, list)) and (len(buffer_data) % i_m)):
+			raise ValueError("Buffer array length is not a multpile of numbers of member count")
+
+
+
+		self.total_records = len(buffer_data) / i_m
+
+		# no matter what, we now allocate a buffer of the right lenght
+		self.data = (GLchar * (r_s * self.total_records))()
+
 		if (isinstance(buffer_data, (bytes, str))):
-			self.data = (GLchar * len(buffer_data))()
+			# they passed a string, directly. We just check the lenght
 			if isinstance(buffer_data, (str)):
 				self.data.value = buffer_data
 			else:
 				self.data.raw = buffer_data
 		elif (isinstance(buffer_data, (tuple, list))):
-			self.data = (GLubyte * len(buffer_data))(*buffer_data)
+			# sequence of number
+			member_shift = 0
+			for r_off in range(0, len(self.data), r_s):
+				self.data[r_off:r_off + r_s] = self.record_def.pack(buffer_data[member_shift:member_shift + i_m])
+				member_shift += i_m
 		else:
-			self.data = buffer_data
+			# it is assumed that these are convertable to ctypes
+			self.data[0:len(self.data)] = buffer_data
 
-		self.size = len(buffer_data)
+
+		self.size = ctypes.sizeof(self.data)
 
 		bid = GLuint()
 		glGenBuffers(1, bid)
@@ -968,240 +1185,31 @@ class Buffer(IndexableObject):
 		glDeleteBuffers(1, (self.id,))
 
 	def __str__(self):
-		bind_str = (("Last bound to %s" % self.last_bound_to) if (self.last_bound_to is not None) else "Never bound")
-		return("OpenGL Buffer Object #%d, %d bytes. %s" % (self.id, self.size, bind_str))
+		bind_str = (("Last bound to %s" % self.last_bound_to.name) if (self.last_bound_to is not None) else "Never bound")
+		return("OpenGL %s #%d(%d bytes). %s. Record format: %s" % (self.__class__.__name__, self.id, self.size, bind_str, self.record_def))
 
 
-
-class VertexAttribute(IndexableObject):
+class VertexAttributeDef(BufferMemberDef):
 	"""
-		A vertex attribute within the context of a vertex buffer definition.
-		An attribute unique identifier is its offset in the pointer stride,
-		and the name is merely an indication.
+		A vertex attribute definition is just a member in a buffer record.
 	"""
-	def __init__(self,
-		att_offset = 0,
-		att_type = GL_FLOAT,
-		att_name = None
-	):
-		"""
-			Arguments:
-			name: 					uniform name, should be unique per program
-			uniform_properties:		is a dictionary indexed by the GLenums that
-									glGetProgramResourceiv accepts as property identifiers
-		"""
-		super(VertexAttribute, self).__init__()
-		self.id = att_offset
-		self.type = att_type
-		try:
-			self.c_type = TYPES_MAPS[att_type]
-		except KeyError:
-			raise TypeError("Unsupported buffer element type: `%s`" % (str(att_type)[0:64]))
-		self.size = ctypes.sizeof(self.c_type)
-		self.name = (str(att_name) if (att_name is not None) else str(att_offset))
-
-
-	def __str__(self):
-		return ("OpenGL Vertex Attribute at offset %d, name: `%s` type: %s(%s, length: %d)" % (
-			self.id,
-			self.name,
-			self.type.name,
-			self.c_type.__name__,
-			self.size
-		))
+	pass
 
 
 
-
-class VertexAttributeCatalog(ObjectCatalog):
+class VertexRecordDef(BufferRecordDef):
 	"""
-		A vertex buffer has an attribute list associated with it. This is it
-
-
-		See parent class for instantiation details.
-
-		As it is usual for this kind of catalog objects,
-		a vertex attribute object does not know what buffer it belongs to:
-		do not mix attributes from different buffers in the same catalog as
-		they'd have overlapping offset ranges.
-		
-
-		See the pack() method to efficiently build vertex data blocks
+		An in-memory vertex definition is basically a glorified buffer record.
+		Just it accepts only VertexAttributeDef as members
 
 	"""
-	item_class = VertexAttribute
+	item_class = VertexAttributeDef
 
 
-	def __init__(self, *args, **kwargs):
-		""" We need to keep track of the stride so that we can maintain proper offsets """
-		self.stride = 0
-		super(VertexAttributeCatalog, self).__init__(*args, **kwargs)
-		
-		# this is a tuple of ctypes instances referring to the relevant offsets
-		# in the packed representation, which is stored _last_packed.
-		# It gets destroyed every time attributes change and rebuilt on first use
-		self._packer = None
-		self._last_packed = None
-
-	def __setitem__(self, key, settee):
-		"""
-			Unfortunately, we need to replicate some functionality from the parent class.
-			The current stride is used to set the ID for the next item, but since
-			we need to accept constructor arguments too if need be, and not just objects,
-			the settee may not be an IndexableObject yet. This forces us to do call the
-			constructor from here and feed it the current stride
-		"""
-		if (settee is None):
-			# special case for dumb constructors
-			settee = self.item_class()
-		if (isinstance(settee, (tuple, list))):
-			# positional-based constructor. We replace the first argument
-			# (the id/offset) with the current stride
-			settee = self.item_class(*([self.stride] + list(settee[1:])))
-		elif (isinstance(settee, (dict))):
-			# keyword-based constructor. We replace that keyword
-			settee.update({"offset": self.stride})
-			settee = self.item_class(**settee)
-		else:
-			if (isinstance(settee, (self.item_class))):
-				settee.id = self.stride
-			else:
-				raise TypeError("Invalid object type: `%s`. Must be `%s`" %
-					(settee.__class__.__name__, self.item_class.__name__)
-				)
-				return None
-
-		super(VertexAttributeCatalog, self).__setitem__(settee.id, settee)
-		self.stride += settee.size
-		# we reset the packer class to force pack() into rebuilding it
-		self._packer = None
-		self._last_packed = None
-		return settee
-
-	def pack(self, vertex_data):
-		"""
-			The "pack" method can be used to efficiently convert a tuple/list of
-			numbers of the right length into the internal char[] representation
-			based on the catalog members.
-			All it expects is a tuple of numerical values in the same number of
-			as the attributes
-			
-			Returns a GLubyte c_ubyte_Array_# that can be used as a buffer
-		"""
-		
-		if (not self.stride):
-			raise OpenGLStateException("No vertex attributes defined")
-
-		if (len(vertex_data) != len(self)):
-			raise OpenGLStateException("Wrong number of members. Must match number of attributes (%d)" % (len(self), ))
-		
-		if (self._packer is None):
-			# we rebuild the packer if need be
-			self._last_packed = (GLubyte * self.stride)()
-			self._packer = tuple(att.c_type.from_buffer(self._last_packed, att_off) for att_off, att in sorted(self.items()))
-
-		# unfortunately I could not find a way to to this without a loop as all
-		# indirect attribute addressing methods (eg: setattr) fail with ctypes
-		for aid in range(len(self._packer)):
-			self._packer[aid].value = vertex_data[aid]
-
-		return self._last_packed;
-
-
-
-class VertexBuffer(IndexableObject):
+class VertexBuffer(Buffer):
 	"""
-		Vertex buffer abstraction. See constructor docstring for details on
-		instantiation.
-
-		Vertex buffers are backed by a single Buffer object, and therefore
-		share the ID namespace. They however are not a subclass of Buffers,
-		as the instantiation is completely different
-		
+		Vertex buffer abstraction. It's just a buffer that uses its own
+		record definition processor
 	"""
-	def __init__(self, attributes, vertex_data):
-		"""
-			Constructing a vertex buffer is relatively easy.
-			The function accepts 2 arguments: a list of
-			GL_* data types (tuple, list or dict), representing the vertex
-			attributes in the stride (one per vertex attribute)
-			and the list of data members (tuple or list). The number of members
-			in the list of vertex data obviously has to be a multiple of the
-			list of attributes
-
-			A dictionary can be passed in the list of attributes, in such
-			case the dict's keys dictate ordering of members (string sorting)
-			and are translated into attribute names. If a non-dictionary
-			(or a single scalar) is passed, the attribute names default to
-			string representations of their order in the iterable
-
-			Doesn't internally check the attribute count against
-			yglGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &nrAttributes) as that'd
-			be context-depenent.
-
-			OpenGL buffers are immutable so this object is too. Attribute
-			pointers go with the buffer when it's deleted
-
-
-			Examples:
-			
-			vb = VertexBuffer(
-				# normalized x, y, z and greyscale value
-				(GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_UNSIGNED_BYTE),
-				(0.55, 0.11, -0.33, 211)
-			)
-			
-			# with named attributes
-			vb = VertexBuffer(
-				{"x": GL_FLOAT, "y": GL_FLOAT, "z": GL_FLOAT, "val": GL_UNSIGNED_BYTE},
-				(0.55, 0.11, -0.33, 211)
-			)
-
-		"""
-
-		if (not len(attributes)):
-			raise ValueError("Attributes list cannot be empty")
-
-		if (not len(vertex_data)):
-			raise ValueError("Vertices data cannot be empty")
-
-		# no matter what was passed in "attributes", we want to be iterating
-		# over (type, index/name) and feed them to the constructor in the order they arrived
-		atts = {str(att_n): att_t for (att_n, att_t) in (
-			attributes.items() if isinstance(attributes, (dict)) else enumerate(
-				attributes if isinstance(attributes, (tuple, list)) else ( attributes, )
-			)
-		)}
-		
-
-		if (len(vertex_data) % len(attributes)):
-			raise ValueError("Vertex data members not ending on a stride boundary. Please ensure len(vertices) is a multiple of your attribute count")
-
-		self.attributes = VertexAttributeCatalog(
-			map(lambda ak : ((None,) + (atts[ak], ak)), sorted(atts.keys()))
-		)
-
-		self.id = -1
-
-
-		# the attributes list is now complete and we now how large our buffer
-		# will be
-		# Here comes the difficult part: since the buffer is an array of chars,
-		# we need to break down every element, regardless of binary width,
-		# into 
-
-		
-
-		# stride calculation
-		#self.stride = sum(map(ctypes.sizeof, atts.values()))
-
-
-		# now that we know for sure
-		#print("%s: %s" % (attkey, atttype))
-		
-	def __str__(self):
-		return "OpenGL VertexBuffer. Buffer: #%d. Attributes: %s" % (
-			self.id,
-			self.attributes
-		)
+	_record_def_processor = VertexRecordDef
 
